@@ -101,10 +101,10 @@ export const deckAtomFamily = atomFamily(
 // ---------------------------------------------------------------------------
 
 export type GameState = "settingUp" | "playing" | "gameOver";
-const gameStateFamily = atomFamily((tab: string) => atom<GameState>("settingUp"));
+const gameStateFamily = atomFamily((_tab: string) => atom<GameState>("settingUp"));
 export const currentGameStateAtom = tabValue(gameStateFamily);
 
-const playersFamily = atomFamily((tab: string) =>
+const playersFamily = atomFamily((_tab: string) =>
     atom<{
         white: OpponentSettings;
         black: OpponentSettings;
@@ -112,5 +112,5 @@ const playersFamily = atomFamily((tab: string) =>
 );
 export const currentPlayersAtom = tabValue(playersFamily);
 
-const currentPuzzleFamily = atomFamily((tab: string) => atom(0));
+const currentPuzzleFamily = atomFamily((_tab: string) => atom(0));
 export const currentPuzzleAtom = tabValue(currentPuzzleFamily);

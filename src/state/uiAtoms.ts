@@ -100,16 +100,16 @@ export function tabValue<T extends object | string | boolean | number | null | u
 // Per-tab panel / display atoms
 // ---------------------------------------------------------------------------
 
-const threatFamily = atomFamily((tab: string) => atom(false));
+const threatFamily = atomFamily((_tab: string) => atom(false));
 export const currentThreatAtom = tabValue(threatFamily);
 
-const evalOpenFamily = atomFamily((tab: string) => atom(true));
+const evalOpenFamily = atomFamily((_tab: string) => atom(true));
 export const currentEvalOpenAtom = tabValue(evalOpenFamily);
 
-const invisibleFamily = atomFamily((tab: string) => atom(false));
+const invisibleFamily = atomFamily((_tab: string) => atom(false));
 export const currentInvisibleAtom = tabValue(invisibleFamily);
 
-const tabFamily = atomFamily((tab: string) => atom("info"));
+const tabFamily = atomFamily((_tab: string) => atom("info"));
 export const currentTabSelectedAtom = tabValue(tabFamily);
 
 const LOCAL_OPTIONS_STORAGE_KEY = "database.local-options";
@@ -148,7 +148,7 @@ function saveLastLocalOptions(options: LocalOptions): void {
     }
 }
 
-const localOptionsFamily = atomFamily((tab: string) => {
+const localOptionsFamily = atomFamily((_tab: string) => {
     const base = atom<LocalOptions>(loadLastLocalOptions());
     return atom(
         (get) => get(base),
@@ -174,22 +174,24 @@ export const seedLocalOptionsAtom = atom(
     },
 );
 
-const dbTypeFamily = atomFamily((tab: string) => atom<"local" | "lch_all" | "lch_master">("local"));
+const dbTypeFamily = atomFamily((_tab: string) =>
+    atom<"local" | "lch_all" | "lch_master">("local"),
+);
 export const currentDbTypeAtom = tabValue(dbTypeFamily);
 
-const dbTabFamily = atomFamily((tab: string) => atom("stats"));
+const dbTabFamily = atomFamily((_tab: string) => atom("stats"));
 export const currentDbTabAtom = tabValue(dbTabFamily);
 
-const analysisTabFamily = atomFamily((tab: string) => atom("engines"));
+const analysisTabFamily = atomFamily((_tab: string) => atom("engines"));
 export const currentAnalysisTabAtom = tabValue(analysisTabFamily);
 
-const practiceTabFamily = atomFamily((tab: string) => atom("train"));
+const practiceTabFamily = atomFamily((_tab: string) => atom("train"));
 export const currentPracticeTabAtom = tabValue(practiceTabFamily);
 
-const expandedEnginesFamily = atomFamily((tab: string) => atom<string[] | undefined>(undefined));
+const expandedEnginesFamily = atomFamily((_tab: string) => atom<string[] | undefined>(undefined));
 export const currentExpandedEnginesAtom = tabValue(expandedEnginesFamily);
 
-const pgnOptionsFamily = atomFamily((tab: string) =>
+const pgnOptionsFamily = atomFamily((_tab: string) =>
     atom({
         comments: true,
         glyphs: true,

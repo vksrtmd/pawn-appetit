@@ -2,6 +2,7 @@ import { Button, Paper, ScrollArea, SimpleGrid, Skeleton, Stack, Text } from "@m
 import { IconSearch, IconUserPlus } from "@tabler/icons-react";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { remove } from "@tauri-apps/plugin-fs";
+import { removeAnalyzedGamesForAccount } from "@/utils/analyzedGames";
 import { useAtom } from "jotai";
 import { useEffect, useState } from "react";
 import type { DatabaseInfo } from "@/bindings";
@@ -268,7 +269,6 @@ function LichessOrChessCom({
 
             // Delete analyzed games for this account
             try {
-              const { removeAnalyzedGamesForAccount } = await import("@/utils/analyzedGames");
               await removeAnalyzedGamesForAccount(account.username, "lichess");
             } catch (error) {
               console.error("Error deleting analyzed games:", error);
@@ -371,7 +371,6 @@ function LichessOrChessCom({
 
             // Delete analyzed games for this account
             try {
-              const { removeAnalyzedGamesForAccount } = await import("@/utils/analyzedGames");
               await removeAnalyzedGamesForAccount(session.chessCom.username, "chesscom");
             } catch (error) {
               console.error("Error deleting analyzed games:", error);

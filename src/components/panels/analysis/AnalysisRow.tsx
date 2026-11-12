@@ -133,7 +133,6 @@ function BoardPopover({
   threat,
   fen,
   orientation,
-  position,
 }: {
   san: string;
   lastMove: Key[];

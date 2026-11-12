@@ -25,7 +25,6 @@ import {
   IconArrowsExchange,
   IconCheck,
   IconCpu,
-  IconPlayerStop,
   IconPlus,
   IconPuzzle,
   IconUser,
@@ -472,26 +471,30 @@ function useClockTimer(
   }, [gameState, intervalId]);
 
   // Start timer for current turn
-  useEffect(() => {
-    if (gameState === "playing" && pos && !intervalId) {
-      const decrementTime = () => {
-        if (pos.turn === "white" && whiteTime !== null) {
-          setWhiteTime((prev) => {
-            const current = prev ?? 0;
-            return current > 0 ? current - CLOCK_UPDATE_INTERVAL : 0;
-          });
-        } else if (pos.turn === "black" && blackTime !== null) {
-          setBlackTime((prev) => {
-            const current = prev ?? 0;
-            return current > 0 ? current - CLOCK_UPDATE_INTERVAL : 0;
-          });
-        }
-      };
+  useEffect(
+    () => {
+      if (gameState === "playing" && pos && !intervalId) {
+        const decrementTime = () => {
+          if (pos.turn === "white" && whiteTime !== null) {
+            setWhiteTime((prev) => {
+              const current = prev ?? 0;
+              return current > 0 ? current - CLOCK_UPDATE_INTERVAL : 0;
+            });
+          } else if (pos.turn === "black" && blackTime !== null) {
+            setBlackTime((prev) => {
+              const current = prev ?? 0;
+              return current > 0 ? current - CLOCK_UPDATE_INTERVAL : 0;
+            });
+          }
+        };
 
-      const id = setInterval(decrementTime, CLOCK_UPDATE_INTERVAL);
-      setIntervalId(id);
-    }
-  }, [gameState, intervalId, pos?.turn, setWhiteTime, setBlackTime, pos]);
+        const id = setInterval(decrementTime, CLOCK_UPDATE_INTERVAL);
+        setIntervalId(id);
+      }
+    },
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- whiteTime/blackTime only feed a null check; adding them would re-run the effect on every clock tick
+    [gameState, intervalId, pos?.turn, setWhiteTime, setBlackTime, pos],
+  );
 }
 
 function BoardGame() {
@@ -520,7 +523,7 @@ function BoardGame() {
           },
         };
       }
-    } catch (e) {
+    } catch {
       // Failed to load game settings
     }
     return {
@@ -551,7 +554,7 @@ function BoardGame() {
     }) => {
       try {
         localStorage.setItem("boardGameSettings", JSON.stringify(settings));
-      } catch (e) {
+      } catch {
         // Failed to save game settings
       }
     },
@@ -707,7 +710,7 @@ function BoardGame() {
   );
 
   // Use root and position to ensure pos updates when moves are made
-  const position = useStore(store, (s) => s.position);
+  useStore(store, (s) => s.position); // subscribe so this component re-renders on position changes
   const [pos, error] = useMemo(() => positionFromFen(lastNode.fen), [lastNode.fen]);
 
   const activeTabData = tabs?.find((tab) => tab.value === activeTab);
@@ -1152,7 +1155,7 @@ function BoardGame() {
             commands.killEngine(currentPlayers.black.engine.path, activeTab).catch(() => {}),
           ]);
         }
-      } catch (e) {
+      } catch {
         // Failed to kill engines
       }
     }
@@ -1246,7 +1249,7 @@ function BoardGame() {
             await saveGameRecord(record);
           }
         }
-      } catch (e) {
+      } catch {
         // Failed to get data from tab, skip saving
       }
     }
@@ -1431,7 +1434,7 @@ function BoardGame() {
         message: t("common.puzzlesGeneratedSuccessfully"),
         color: "green",
       });
-    } catch (error) {
+    } catch {
       notifications.show({
         title: t("common.error"),
         message: t("common.failedToGeneratePuzzles"),

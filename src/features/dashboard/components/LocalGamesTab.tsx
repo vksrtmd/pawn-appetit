@@ -1,6 +1,6 @@
 import { ActionIcon, Avatar, Badge, Button, Group, ScrollArea, Table, Text } from "@mantine/core";
 import { IconTrash } from "@tabler/icons-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { GameRecord } from "@/utils/gameRecords";
 import { calculateGameStats, type GameStats } from "@/utils/gameRecords";

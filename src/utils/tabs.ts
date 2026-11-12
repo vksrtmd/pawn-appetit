@@ -1,5 +1,4 @@
 import { save } from "@tauri-apps/plugin-dialog";
-import { INITIAL_FEN } from "chessops/fen";
 import { z } from "zod";
 import type { StoreApi } from "zustand";
 import { commands } from "@/bindings";
@@ -8,9 +7,9 @@ import { serializeStorageValue } from "./tabStateStorage";
 import type { TreeStoreState } from "@/state/store/tree";
 import { createFile, getFileNameWithoutExtension, isTempImportFile } from "@/utils/files";
 import { unwrap } from "@/utils/unwrap";
-import { getMoveText, getPGN, parsePGN } from "./chess";
+import { getPGN, parsePGN } from "./chess";
 import { formatDateToPGN } from "./format";
-import { defaultTree, type GameHeaders, type TreeNode, type TreeState } from "./treeReducer";
+import { defaultTree, type GameHeaders, type TreeState } from "./treeReducer";
 
 const dbGameMetadataSchema = z.object({
     type: z.literal("db"),
@@ -248,109 +247,6 @@ export async function saveTab(tab: Tab, store: StoreApi<TreeStoreState>) {
             moves,
         });
     }
-}
-
-// Helper function to generate PGN for a single variation (without headers)
-function getVariationPGN(
-    node: TreeNode,
-    {
-        comments,
-        extraMarkups,
-        glyphs,
-        variations,
-        isFirst = false,
-    }: {
-        comments: boolean;
-        extraMarkups: boolean;
-        glyphs: boolean;
-        variations: boolean;
-        isFirst?: boolean;
-    },
-): string {
-    let pgn = "";
-
-    // Get the move text for this node (getMoveText handles move numbers and formatting)
-    if (node.san) {
-        pgn += getMoveText(node, {
-            glyphs,
-            comments,
-            extraMarkups,
-            isFirst,
-        });
-    }
-
-    // Continue with the main line (first child)
-    if (node.children.length > 0) {
-        pgn += getVariationPGN(node.children[0], {
-            comments,
-            extraMarkups,
-            glyphs,
-            variations,
-            isFirst: false,
-        });
-    }
-
-    // Add sub-variations
-    if (variations && node.children.length > 1) {
-        for (let i = 1; i < node.children.length; i++) {
-            const subVariation = node.children[i];
-            const subVariationPGN = getVariationPGN(subVariation, {
-                comments,
-                extraMarkups,
-                glyphs,
-                variations,
-                isFirst: true,
-            });
-            pgn += ` (${subVariationPGN})`;
-        }
-    }
-
-    return pgn.trim();
-}
-
-// Helper function to generate PGN headers text
-function getPgnHeadersText(headers: GameHeaders): string {
-    let text = `[Event "${headers.event || "?"}"]\n`;
-    text += `[Site "${headers.site || "?"}"]\n`;
-    text += `[Date "${headers.date || "????.??.??"}"]\n`;
-    text += `[Round "${headers.round || "?"}"]\n`;
-    text += `[White "${headers.white || "?"}"]\n`;
-    text += `[Black "${headers.black || "?"}"]\n`;
-    text += `[Result "${headers.result || "*"}"]\n`;
-
-    if (headers.white_elo) {
-        text += `[WhiteElo "${headers.white_elo}"]\n`;
-    }
-    if (headers.black_elo) {
-        text += `[BlackElo "${headers.black_elo}"]\n`;
-    }
-    if (headers.start && headers.start.length > 0) {
-        text += `[Start "${JSON.stringify(headers.start)}"]\n`;
-    }
-    if (headers.orientation) {
-        text += `[Orientation "${headers.orientation}"]\n`;
-    }
-    if (headers.time_control) {
-        text += `[TimeControl "${headers.time_control}"]\n`;
-    }
-    if (headers.white_time_control) {
-        text += `[WhiteTimeControl "${headers.white_time_control}"]\n`;
-    }
-    if (headers.black_time_control) {
-        text += `[BlackTimeControl "${headers.black_time_control}"]\n`;
-    }
-    if (headers.eco) {
-        text += `[ECO "${headers.eco}"]\n`;
-    }
-    if (headers.variant) {
-        text += `[Variant "${headers.variant}"]\n`;
-    }
-    if (headers.fen && headers.fen !== INITIAL_FEN) {
-        text += `[SetUp "1"]\n`;
-        text += `[FEN "${headers.fen}"]\n`;
-    }
-
-    return text;
 }
 
 export async function reloadTab(tab: Tab): Promise<TreeState | undefined> {

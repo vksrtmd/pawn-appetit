@@ -1,4 +1,4 @@
-import { Badge, Box, Button, Card, Container, Group, Stack, Text, Title } from "@mantine/core";
+import { Badge, Box, Button, Card, Group, Stack, Text, Title } from "@mantine/core";
 import { IconArrowRight, IconFlame } from "@tabler/icons-react";
 import { FC } from "react";
 import { PracticeCategory } from "../../constants/practices";

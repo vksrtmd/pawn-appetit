@@ -1,4 +1,3 @@
-import { makeUci } from "chessops";
 import { INITIAL_BOARD_FEN } from "chessops/fen";
 import { parseSan } from "chessops/san";
 import { useAtom } from "jotai";
@@ -48,10 +47,10 @@ export const usePuzzleDatabase = () => {
 
     const loadDb3RatingRange = useCallback(
         async (dbPath: string) => {
-            PUZZLE_DEBUG_LOGS && logger.debug("Loading DB3 rating range:", dbPath);
+            if (PUZZLE_DEBUG_LOGS) logger.debug("Loading DB3 rating range:", dbPath);
             const result = await commands.getPuzzleRatingRange(dbPath);
             if (result.status === "ok") {
-                PUZZLE_DEBUG_LOGS && logger.debug("DB3 rating range loaded:", result.data);
+                if (PUZZLE_DEBUG_LOGS) logger.debug("DB3 rating range loaded:", result.data);
                 setDbRatingRange(result.data);
                 setRatingRange(result.data);
             }
@@ -73,7 +72,7 @@ export const usePuzzleDatabase = () => {
 
     const loadPgnRatingRange = useCallback(
         async (dbPath: string) => {
-            PUZZLE_DEBUG_LOGS && logger.debug("Loading PGN rating range:", dbPath);
+            if (PUZZLE_DEBUG_LOGS) logger.debug("Loading PGN rating range:", dbPath);
             const count = unwrap(await commands.countPgnGames(dbPath));
 
             if (count > 0) {
@@ -88,7 +87,7 @@ export const usePuzzleDatabase = () => {
                 );
 
                 const { minRating, maxRating } = calculateRatingBounds(puzzles);
-                PUZZLE_DEBUG_LOGS &&
+                if (PUZZLE_DEBUG_LOGS)
                     logger.debug("PGN rating bounds:", {
                         minRating,
                         maxRating,
@@ -252,7 +251,7 @@ export const usePuzzleDatabase = () => {
             throw new Error("Database not found");
         }
 
-        PUZZLE_DEBUG_LOGS &&
+        if (PUZZLE_DEBUG_LOGS)
             logger.debug("Generating puzzle from database:", {
                 db: dbInfo.title,
                 range: currentRange,
@@ -262,7 +261,7 @@ export const usePuzzleDatabase = () => {
         if (dbInfo.path.endsWith(".db3")) {
             const res = await commands.getPuzzle(db, currentRange[0], currentRange[1], !inOrder);
             const dbPuzzle = unwrap(res);
-            PUZZLE_DEBUG_LOGS &&
+            if (PUZZLE_DEBUG_LOGS)
                 logger.debug("Generated DB3 puzzle:", {
                     rating: dbPuzzle.rating,
                     moves: dbPuzzle.moves.split(" ").length,
@@ -284,7 +283,7 @@ export const usePuzzleDatabase = () => {
                     "Unable to generate a puzzle from local file within the requested range",
                 );
             }
-            PUZZLE_DEBUG_LOGS &&
+            if (PUZZLE_DEBUG_LOGS)
                 logger.debug("Generated PGN puzzle:", {
                     rating: dbPuzzle.rating,
                     moves: dbPuzzle.moves,
@@ -294,7 +293,7 @@ export const usePuzzleDatabase = () => {
     };
 
     const clearPuzzleCache = (dbPath: string) => {
-        PUZZLE_DEBUG_LOGS && logger.debug("Clearing puzzle cache for:", dbPath);
+        if (PUZZLE_DEBUG_LOGS) logger.debug("Clearing puzzle cache for:", dbPath);
         const cachedDb = PuzzleDbFromPgnCache.get(dbPath);
         if (cachedDb) {
             cachedDb.generated = {

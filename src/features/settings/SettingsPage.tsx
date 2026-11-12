@@ -27,7 +27,6 @@ import { useAtom } from "jotai";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { updateDirectoriesCache } from "@/App";
-import AboutModal from "@/components/About";
 import FileInput from "@/components/FileInput";
 import ColorSchemeSettings from "@/features/themes/components/ColorSchemeSettings";
 import ThemeSelectionSettings from "@/features/themes/components/ThemeSettings";
@@ -912,9 +911,7 @@ export default function Page() {
     ],
     [
       t,
-      i18n.language,
-      i18n.changeLanguage,
-      i18n.dir,
+      i18n,
       setDirection,
       isNative,
       setIsNative,
@@ -932,6 +929,7 @@ export default function Page() {
       moveNotationData,
       waysToMoveData,
       coordinatesMode,
+      setCoordinatesMode,
       coordinatesModeData,
       practiceAnimationSpeed,
       practiceAnimationSpeedData,

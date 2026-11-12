@@ -15,12 +15,10 @@ import { TreeStateContext } from "@/components/TreeStateContext";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import {
   activeTabAtom,
-  allEnabledAtom,
   autoSaveAtom,
   currentPracticeTabAtom,
   currentTabAtom,
   currentTabSelectedAtom,
-  enableAllAtom,
   pendingPlayFenAtom,
   tabsAtom,
 } from "@/state/atoms";
@@ -57,16 +55,11 @@ function BoardVariants() {
 
   const reset = useStore(store, (s) => s.reset);
   const clearShapes = useStore(store, (s) => s.clearShapes);
-  const setAnnotation = useStore(store, (s) => s.setAnnotation);
   const setStoreState = useStore(store, (s) => s.setState);
   const setStoreSave = useStore(store, (s) => s.save);
   const root = useStore(store, (s) => s.root);
   const headers = useStore(store, (s) => s.headers);
-  const setFen = useStore(store, (s) => s.setFen);
-  const setHeaders = useStore(store, (s) => s.setHeaders);
   const position = useStore(store, (s) => s.position);
-  const promoteVariation = useStore(store, (s) => s.promoteVariation);
-  const deleteMove = useStore(store, (s) => s.deleteMove);
 
   // Open a play tab for the position currently on the board, leaving this game untouched.
   const playFromHere = useCallback(() => {
@@ -116,7 +109,7 @@ function BoardVariants() {
             });
           }
         }
-      } catch (error) {
+      } catch {
         // Always show error notifications
         notifications.show({
           title: t("common.error"),
@@ -242,7 +235,7 @@ function BoardVariants() {
         message: t("common.puzzlesGeneratedSuccessfully", { count: puzzles.length }),
         color: "green",
       });
-    } catch (error) {
+    } catch {
       notifications.show({
         title: t("common.error"),
         message: t("common.failedToGeneratePuzzles"),
@@ -285,10 +278,6 @@ function BoardVariants() {
       append: true,
     });
   }, [setCurrentTab, reset, filePath]);
-
-  const [, enable] = useAtom(enableAllAtom);
-  const allEnabledLoader = useAtomValue(allEnabledAtom);
-  const allEnabled = allEnabledLoader.state === "hasData" && allEnabledLoader.data;
 
   const copyFen = useCallback(async () => {
     try {

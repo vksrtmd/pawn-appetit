@@ -165,9 +165,10 @@ function PracticeBoard({
   }, [isEngineTurn, requestEngineMove, engine]);
 
   useEffect(() => {
+    const tab = engineTabRef.current;
     return () => {
       if (engineColor && engine) {
-        commands.stopEngine(engine.path, engineTabRef.current).catch(console.error);
+        commands.stopEngine(engine.path, tab).catch(console.error);
       }
     };
   }, [engineColor, engine]);

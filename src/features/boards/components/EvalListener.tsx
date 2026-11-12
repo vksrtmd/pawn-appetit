@@ -128,48 +128,53 @@ function EngineListener({
       tab: activeTab!,
     }),
   );
-  useEffect(() => {
-    if (!settings.enabled) return;
-    const unlisten = events.bestMovesPayload.listen(({ payload }) => {
-      const ev = payload.bestLines;
-      if (
-        payload.engine === engine.name &&
-        payload.tab === activeTab &&
-        payload.fen === searchingFen &&
-        equal(payload.moves, searchingMoves) &&
-        settings.enabled &&
-        !isGameOver
-      ) {
-        startTransition(() => {
-          setEngineVariation((prev) => {
-            const newMap = new Map(prev);
-            newMap.set(`${searchingFen}:${searchingMoves.join(",")}`, ev);
-            if (threat) {
-              newMap.delete(`${fen}:${moves.join(",")}`);
-            } else if (finalFen) {
-              newMap.delete(`${swapMove(finalFen)}:`);
-            }
-            return newMap;
+  const searchingMovesKey = JSON.stringify(searchingMoves);
+  useEffect(
+    () => {
+      if (!settings.enabled) return;
+      const unlisten = events.bestMovesPayload.listen(({ payload }) => {
+        const ev = payload.bestLines;
+        if (
+          payload.engine === engine.name &&
+          payload.tab === activeTab &&
+          payload.fen === searchingFen &&
+          equal(payload.moves, searchingMoves) &&
+          settings.enabled &&
+          !isGameOver
+        ) {
+          startTransition(() => {
+            setEngineVariation((prev) => {
+              const newMap = new Map(prev);
+              newMap.set(`${searchingFen}:${searchingMoves.join(",")}`, ev);
+              if (threat) {
+                newMap.delete(`${fen}:${moves.join(",")}`);
+              } else if (finalFen) {
+                newMap.delete(`${swapMove(finalFen)}:`);
+              }
+              return newMap;
+            });
+            setProgress(payload.progress);
+            setScore(ev[0].score);
           });
-          setProgress(payload.progress);
-          setScore(ev[0].score);
-        });
-      }
-    });
-    return () => {
-      unlisten.then((f) => f());
-    };
-  }, [
-    activeTab,
-    setScore,
-    settings.enabled,
-    isGameOver,
-    searchingFen,
-    JSON.stringify(searchingMoves),
-    engine.name,
-    setEngineVariation,
-    setProgress,
-  ]);
+        }
+      });
+      return () => {
+        unlisten.then((f) => f());
+      };
+    },
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- fen/moves/finalFen/threat are read at event time; searchingMoves is tracked via searchingMovesKey; resubscribing on each change would alter timing
+    [
+      activeTab,
+      setScore,
+      settings.enabled,
+      isGameOver,
+      searchingFen,
+      searchingMovesKey,
+      engine.name,
+      setEngineVariation,
+      setProgress,
+    ],
+  );
 
   const getBestMoves = useMemo(
     () =>
@@ -182,7 +187,7 @@ function EngineListener({
         .with("chessdb", () => chessdbGetBestMoves)
         .with("lichess", () => lichessGetBestMoves)
         .exhaustive(),
-    [engine.type, engine],
+    [engine],
   );
 
   useThrottledEffect(

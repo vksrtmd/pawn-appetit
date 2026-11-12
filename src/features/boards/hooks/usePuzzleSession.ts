@@ -24,7 +24,7 @@ export const usePuzzleSession = (id: string) => {
     const setPuzzle = (puzzle: { fen: string; moves: string[] }) => {
         setFen(puzzle.fen);
         if (puzzle.moves.length % 2 === 0) {
-            PUZZLE_DEBUG_LOGS &&
+            if (PUZZLE_DEBUG_LOGS)
                 logger.debug("Setting puzzle. Puzzle has even moves. Player must play second");
             makeMove({ payload: parseUci(puzzle.moves[0])! });
         }
@@ -39,7 +39,7 @@ export const usePuzzleSession = (id: string) => {
             if (puzzle.rating) {
                 const oldRating = playerRating;
                 const newRating = updateElo(playerRating, puzzle.rating, completion === "correct");
-                PUZZLE_DEBUG_LOGS &&
+                if (PUZZLE_DEBUG_LOGS)
                     logger.debug("Rating update:", {
                         completion,
                         puzzleRating: puzzle.rating,
@@ -55,7 +55,7 @@ export const usePuzzleSession = (id: string) => {
     };
 
     const addPuzzle = (puzzle: Puzzle) => {
-        PUZZLE_DEBUG_LOGS &&
+        if (PUZZLE_DEBUG_LOGS)
             logger.debug("Adding puzzle to session:", {
                 fen: puzzle.fen,
                 rating: puzzle.rating,
@@ -70,12 +70,12 @@ export const usePuzzleSession = (id: string) => {
     };
 
     const clearSession = () => {
-        PUZZLE_DEBUG_LOGS && logger.debug("Clearing puzzle session");
+        if (PUZZLE_DEBUG_LOGS) logger.debug("Clearing puzzle session");
         setPuzzles([]);
     };
 
     const selectPuzzle = (index: number) => {
-        PUZZLE_DEBUG_LOGS &&
+        if (PUZZLE_DEBUG_LOGS)
             logger.debug("Selecting puzzle:", { index, totalPuzzles: puzzles.length });
         setCurrentPuzzle(index);
         setPuzzle(puzzles[index]);

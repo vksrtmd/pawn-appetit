@@ -1,17 +1,7 @@
-import {
-  Badge,
-  Box,
-  Button,
-  Card,
-  Group,
-  RingProgress,
-  Stack,
-  Text,
-  ThemeIcon,
-} from "@mantine/core";
+import { Badge, Box, Button, Card, Group, RingProgress, Stack, Text } from "@mantine/core";
 import { IconArrowRight } from "@tabler/icons-react";
 import { FC } from "react";
-import { PracticeCategory, uiConfig } from "../../constants/practices";
+import { PracticeCategory } from "../../constants/practices";
 import classes from "./CategoryCard.module.css";
 
 interface CategoryCardProps {

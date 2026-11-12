@@ -26,6 +26,7 @@ export function ChessComGamesTab({
   const [gameStats, setGameStats] = useState<Map<string, GameStats>>(new Map());
 
   // Calculate stats for games with PGN
+  const gamesPgnKey = games.map((g) => g.pgn).join("|");
   useEffect(() => {
     if (games.length === 0) return;
 
@@ -76,7 +77,7 @@ export function ChessComGamesTab({
       cancelled = true;
       clearTimeout(timeoutId);
     };
-  }, [games, chessComUsernames, games.map((g) => g.pgn).join("|")]); // Also depend on PGNs to recalculate when PGNs are updated
+  }, [games, chessComUsernames, gamesPgnKey]); // Also depend on PGNs to recalculate when PGNs are updated
 
   // Calculate move count from PGN if available
   const getMoveCount = (game: ChessComGame): number => {

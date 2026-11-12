@@ -1,7 +1,12 @@
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { loadDirectories } from "@/App";
 import { commands, type PuzzleDatabaseInfo } from "@/bindings";
-import type { FileInfoMetadata, FileMetadata } from "@/features/files/utils/file";
+import { BaseDirectory, readDir } from "@tauri-apps/plugin-fs";
+import {
+    type FileInfoMetadata,
+    type FileMetadata,
+    processEntriesRecursively,
+} from "@/features/files/utils/file";
 import { logger } from "./logger";
 import { unwrap } from "./unwrap";
 
@@ -31,9 +36,6 @@ export const ADAPTIVE_EASY_MAX_PROB = 0.8;
 
 // Helper functions to get data from different sections
 async function getDatabasesFromDatabasesSection(): Promise<PuzzleDatabaseInfo[]> {
-    const { readDir } = await import("@tauri-apps/plugin-fs");
-    const { BaseDirectory } = await import("@tauri-apps/plugin-fs");
-
     let dbPuzzles: PuzzleDatabaseInfo[] = [];
 
     // Get .db3 puzzle databases from AppData/db folder
@@ -55,10 +57,6 @@ async function getDatabasesFromDatabasesSection(): Promise<PuzzleDatabaseInfo[]>
 }
 
 async function getFilesFromFilesSection(): Promise<PuzzleDatabaseInfo[]> {
-    const { readDir } = await import("@tauri-apps/plugin-fs");
-    const { BaseDirectory } = await import("@tauri-apps/plugin-fs");
-    const { processEntriesRecursively } = await import("@/features/files/utils/file");
-
     let localPuzzles: PuzzleDatabaseInfo[] = [];
 
     try {
@@ -109,7 +107,7 @@ export function updateElo(
     const expected = expectedScore(playerRating, puzzleRating);
     const newRating = playerRating + kFactor * (score - expected);
 
-    PUZZLE_DEBUG_LOGS &&
+    if (PUZZLE_DEBUG_LOGS)
         logger.debug("Elo calculation:", {
             playerRating: Math.round(playerRating),
             puzzleRating,
@@ -139,7 +137,7 @@ export function getPuzzleRangeProb(
     const upperBound = invertElo(minProb); // harder puzzles (lower success chance)
     const range: [number, number] = [Math.round(lowerBound), Math.round(upperBound)];
 
-    PUZZLE_DEBUG_LOGS &&
+    if (PUZZLE_DEBUG_LOGS)
         logger.debug("Puzzle range calculation:", {
             playerRating,
             minProb,
@@ -167,7 +165,7 @@ export function getAdaptiveProbabilities(recentResults: Completion[]): [number, 
         maxProb = ADAPTIVE_EASY_MAX_PROB;
     }
 
-    PUZZLE_DEBUG_LOGS &&
+    if (PUZZLE_DEBUG_LOGS)
         logger.debug("Adaptive probabilities:", {
             recentResults,
             consecutiveFailures: failureCount,

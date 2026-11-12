@@ -63,10 +63,7 @@ describe("Chess Engine", () => {
 
         const pawnMoves = dests.get("f4");
         expect(pawnMoves).toBeDefined();
-        if (pawnMoves) {
-            expect(pawnMoves).toContain("f5"); // Forward move
-            expect(pawnMoves).toContain("e5"); // Capture diagonally
-        }
+        expect(pawnMoves).toEqual(expect.arrayContaining(["f5", "e5"])); // Forward move, diagonal capture
     });
 
     it("should handle knight moves correctly", () => {
@@ -77,13 +74,8 @@ describe("Chess Engine", () => {
 
         const knightMoves = dests.get("e3");
         expect(knightMoves).toBeDefined();
-        if (knightMoves) {
-            expect(knightMoves.length).toBeGreaterThan(0);
-            // Knight at e3 should be able to move to some squares
-            expect(knightMoves).toContain("d5");
-            expect(knightMoves).toContain("f5");
-            expect(knightMoves).toContain("c4");
-            expect(knightMoves).toContain("g4");
-        }
+        expect(knightMoves!.length).toBeGreaterThan(0);
+        // Knight at e3 should be able to move to some squares
+        expect(knightMoves).toEqual(expect.arrayContaining(["d5", "f5", "c4", "g4"]));
     });
 });

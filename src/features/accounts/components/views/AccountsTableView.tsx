@@ -25,6 +25,7 @@ import {
 } from "@tabler/icons-react";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { remove } from "@tauri-apps/plugin-fs";
+import { removeAnalyzedGamesForAccount } from "@/utils/analyzedGames";
 import { useAtom, useAtomValue } from "jotai";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -280,7 +281,6 @@ function AccountsTableView({
 
         // Delete analyzed games for this account
         try {
-          const { removeAnalyzedGamesForAccount } = await import("@/utils/analyzedGames");
           await removeAnalyzedGamesForAccount(username, "lichess");
         } catch (error) {
           console.error("Error deleting analyzed games:", error);
@@ -318,7 +318,6 @@ function AccountsTableView({
 
         // Delete analyzed games for this account
         try {
-          const { removeAnalyzedGamesForAccount } = await import("@/utils/analyzedGames");
           await removeAnalyzedGamesForAccount(username, "chesscom");
         } catch (error) {
           console.error("Error deleting analyzed games:", error);
