@@ -1,4 +1,10 @@
-use std::{collections::VecDeque, fs::File, io::Read, path::PathBuf, sync::Mutex};
+use std::{
+    collections::VecDeque,
+    fs::File,
+    io::Read,
+    path::{Path, PathBuf},
+    sync::Mutex,
+};
 
 use diesel::{
     connection::SimpleConnection, dsl::sql, insert_into, sql_types::Bool, Connection,
@@ -315,7 +321,7 @@ pub async fn import_puzzle_file(
 
     // Check if source file exists
     if !source_file.exists() {
-        return Err(Error::IoError(std::io::Error::new(
+        return Err(Error::IoDetail(std::io::Error::new(
             std::io::ErrorKind::NotFound,
             "Source file not found",
         )));
@@ -351,13 +357,13 @@ pub async fn import_puzzle_file(
 /// Copies an existing puzzle database to a new location
 async fn copy_puzzle_database(
     source_file: &PathBuf,
-    db_path: &PathBuf,
+    db_path: &Path,
     _title: &str,
     _description: &str,
 ) -> Result<(), Error> {
     // Copy the source database file to the destination path
     std::fs::copy(source_file, db_path).map_err(|e| {
-        Error::IoError(std::io::Error::new(
+        Error::IoDetail(std::io::Error::new(
             e.kind(),
             format!("Failed to copy database: {}", e),
         ))
@@ -368,7 +374,7 @@ async fn copy_puzzle_database(
 /// Imports puzzles from a PGN file
 async fn import_puzzles_from_pgn(
     source_file: &PathBuf,
-    db_path: &PathBuf,
+    db_path: &Path,
     title: &str,
     description: &str,
     app: &tauri::AppHandle,
@@ -380,14 +386,14 @@ async fn import_puzzles_from_pgn(
 
     // Read and parse PGN file with better error handling
     let file = File::open(source_file).map_err(|e| {
-        Error::IoError(std::io::Error::new(
+        Error::IoDetail(std::io::Error::new(
             e.kind(),
             format!("Failed to open file '{}': {}", source_file.display(), e),
         ))
     })?;
 
     let puzzles = parse_puzzles_from_pgn(file).map_err(|e| {
-        Error::IoError(std::io::Error::new(
+        Error::IoDetail(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!(
                 "Failed to parse puzzles from '{}': {}",
@@ -398,7 +404,7 @@ async fn import_puzzles_from_pgn(
     })?;
 
     if puzzles.is_empty() {
-        return Err(Error::IoError(std::io::Error::new(
+        return Err(Error::IoDetail(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!("No valid puzzles found in file '{}'", source_file.display()),
         )));
@@ -427,7 +433,7 @@ async fn import_puzzles_from_pgn(
 /// Imports puzzles from a compressed file
 async fn import_puzzles_from_compressed(
     source_file: &PathBuf,
-    db_path: &PathBuf,
+    db_path: &Path,
     title: &str,
     description: &str,
     app: &tauri::AppHandle,
@@ -436,7 +442,7 @@ async fn import_puzzles_from_compressed(
     create_puzzle_database(db_path, title, description)?;
 
     let file = File::open(source_file).map_err(|e| {
-        Error::IoError(std::io::Error::new(
+        Error::IoDetail(std::io::Error::new(
             e.kind(),
             format!(
                 "Failed to open compressed file '{}': {}",
@@ -447,7 +453,7 @@ async fn import_puzzles_from_compressed(
     })?;
 
     let decoder = zstd::Decoder::new(file).map_err(|e| {
-        Error::IoError(std::io::Error::new(
+        Error::IoDetail(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!(
                 "Failed to decompress file '{}': {}",
@@ -458,7 +464,7 @@ async fn import_puzzles_from_compressed(
     })?;
 
     let puzzles = parse_puzzles_from_pgn(decoder).map_err(|e| {
-        Error::IoError(std::io::Error::new(
+        Error::IoDetail(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!(
                 "Failed to parse puzzles from compressed file '{}': {}",
@@ -469,7 +475,7 @@ async fn import_puzzles_from_compressed(
     })?;
 
     if puzzles.is_empty() {
-        return Err(Error::IoError(std::io::Error::new(
+        return Err(Error::IoDetail(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             format!(
                 "No valid puzzles found in compressed file '{}'",
@@ -501,11 +507,7 @@ async fn import_puzzles_from_compressed(
 }
 
 /// Creates a new puzzle database with the proper schema
-fn create_puzzle_database(
-    db_path: &PathBuf,
-    _title: &str,
-    _description: &str,
-) -> Result<(), Error> {
+fn create_puzzle_database(db_path: &Path, _title: &str, _description: &str) -> Result<(), Error> {
     let mut db = diesel::SqliteConnection::establish(&db_path.to_string_lossy())?;
 
     // Load the schema from external SQL files
@@ -534,7 +536,7 @@ fn create_puzzle_database(
 /// * `Ok(())` if the schema exists or was successfully created
 /// * `Err(Error)` if there was a problem initializing the schema
 #[allow(dead_code)]
-fn ensure_puzzle_schema(db_path: &PathBuf) -> Result<(), Error> {
+fn ensure_puzzle_schema(db_path: &Path) -> Result<(), Error> {
     let mut db = diesel::SqliteConnection::establish(&db_path.to_string_lossy())?;
 
     // Check if puzzles table exists by trying to query it

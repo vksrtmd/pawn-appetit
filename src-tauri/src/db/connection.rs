@@ -70,6 +70,8 @@ pub type PooledSqliteConnection =
 
 /// Add the game end-time columns to databases created before they existed.
 /// Older files must keep working without a full migration step.
+// diesel's QueryableByName derive expands to `field: field`.
+#[allow(clippy::redundant_field_names)]
 fn ensure_game_time_columns(conn: &mut SqliteConnection) -> diesel::result::QueryResult<()> {
     use diesel::sql_types::BigInt;
     use diesel::{QueryableByName, RunQueryDsl};

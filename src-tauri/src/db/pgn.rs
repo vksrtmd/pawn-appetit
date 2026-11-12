@@ -201,7 +201,7 @@ impl std::fmt::Display for GameTree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self.pretty_print(f, None) {
             Ok(()) => Ok(()),
-            Err(Error::FormatError(err)) => Err(err),
+            Err(Error::Fmt(err)) => Err(err),
             Err(_) => {
                 write!(f, "Invalid game tree")?;
                 Ok(())

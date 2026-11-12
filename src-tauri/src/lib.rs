@@ -77,6 +77,9 @@ pub type GameData = (
     i32,
 );
 
+type LineCacheKey = (GameQueryJs, std::path::PathBuf);
+type LineCacheValue = (Vec<PositionStats>, Vec<NormalizedGame>);
+
 #[derive(Derivative)]
 #[derivative(Default)]
 pub struct AppState {
@@ -87,9 +90,7 @@ pub struct AppState {
     #[derivative(Default(
         value = "Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(100).unwrap()))"
     ))]
-    line_cache: Mutex<
-        lru::LruCache<(GameQueryJs, std::path::PathBuf), (Vec<PositionStats>, Vec<NormalizedGame>)>,
-    >,
+    line_cache: Mutex<lru::LruCache<LineCacheKey, LineCacheValue>>,
     db_cache: Mutex<Arc<Vec<GameData>>>,
     #[derivative(Default(value = "Arc::new(Semaphore::new(2))"))]
     new_request: Arc<Semaphore>,

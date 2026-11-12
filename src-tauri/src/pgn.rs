@@ -200,7 +200,7 @@ pub async fn delete_game(
 
     let mut parser = PgnParser::new(file_r.try_clone()?);
 
-    parser.offset_by_index(n as usize, &state, &file.to_string_lossy().to_string())?;
+    parser.offset_by_index(n as usize, &state, file.to_string_lossy().as_ref())?;
 
     let starting_bytes = parser.position()?;
 
@@ -241,7 +241,7 @@ pub async fn write_game(
 
     let mut parser = PgnParser::new(file_r.try_clone()?);
 
-    parser.offset_by_index(n as usize, &state, &file.to_string_lossy().to_string())?;
+    parser.offset_by_index(n as usize, &state, file.to_string_lossy().as_ref())?;
 
     tmpf.seek(SeekFrom::Start(parser.position()?))?;
     tmpf.write_all(pgn.as_bytes())?;

@@ -201,7 +201,7 @@ impl EngineProcess {
     }
 
     /// Set the engine's position using FEN and move list.
-    pub async fn set_position(&mut self, fen: &str, moves: &Vec<String>) -> Result<(), Error> {
+    pub async fn set_position(&mut self, fen: &str, moves: &[String]) -> Result<(), Error> {
         let msg = if moves.is_empty() {
             format!("position fen {}\n", fen)
         } else {
@@ -209,7 +209,7 @@ impl EngineProcess {
         };
         self.stdin.write_all(msg.as_bytes()).await?;
         self.options.fen = fen.to_string();
-        self.options.moves = moves.clone();
+        self.options.moves = moves.to_vec();
         self.logs.push(EngineLog::Gui(msg));
         Ok(())
     }

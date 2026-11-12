@@ -9,20 +9,20 @@ use tauri::{AppHandle, Manager};
 #[derive(Debug, thiserror::Error)]
 pub enum MigrationError {
     #[error("Failed to migrate from legacy app {identifier}: {source}")]
-    LegacyMigrationFailed {
+    LegacyMigration {
         identifier: String,
         source: Box<dyn std::error::Error + Send + Sync>,
     },
     #[error("Failed to copy legacy data from {from} to {to}: {source}")]
-    LegacyDataCopyFailed {
+    LegacyDataCopy {
         from: String,
         to: String,
         source: Box<dyn std::error::Error + Send + Sync>,
     },
     #[error("Failed to get app data directory: {source}")]
-    AppDataDirectoryFailed { source: tauri::Error },
+    AppDataDirectory { source: tauri::Error },
     #[error("Failed to create parent directory {path}: {source}")]
-    DirectoryCreationFailed {
+    DirectoryCreation {
         path: String,
         source: std::io::Error,
     },
@@ -54,13 +54,13 @@ pub fn migrate_from_legacy_apps(app: &AppHandle) -> Result<(), MigrationError> {
         let current_app_data = app
             .path()
             .app_data_dir()
-            .map_err(|e| MigrationError::AppDataDirectoryFailed { source: e })?;
+            .map_err(|e| MigrationError::AppDataDirectory { source: e })?;
 
         // Skip migration if current directory already exists and has content
         if current_app_data.exists()
             && current_app_data
                 .read_dir()
-                .map_or(false, |mut dir| dir.next().is_some())
+                .is_ok_and(|mut dir| dir.next().is_some())
         {
             log::info!(
                 "Current app data directory already exists with content, skipping migration"
@@ -71,7 +71,7 @@ pub fn migrate_from_legacy_apps(app: &AppHandle) -> Result<(), MigrationError> {
         // Look for legacy app directories to migrate from
         for &legacy_identifier in LEGACY_IDENTIFIERS {
             let legacy_path = super::get_legacy_app_data_path(legacy_identifier).map_err(|e| {
-                MigrationError::LegacyMigrationFailed {
+                MigrationError::LegacyMigration {
                     identifier: legacy_identifier.to_string(),
                     source: e,
                 }
@@ -83,11 +83,9 @@ pub fn migrate_from_legacy_apps(app: &AppHandle) -> Result<(), MigrationError> {
 
                 // Ensure the parent directory of the current app data exists
                 if let Some(parent) = current_app_data.parent() {
-                    create_dir_all(parent).map_err(|e| {
-                        MigrationError::DirectoryCreationFailed {
-                            path: parent.display().to_string(),
-                            source: e,
-                        }
+                    create_dir_all(parent).map_err(|e| MigrationError::DirectoryCreation {
+                        path: parent.display().to_string(),
+                        source: e,
                     })?;
                 }
 
@@ -98,13 +96,10 @@ pub fn migrate_from_legacy_apps(app: &AppHandle) -> Result<(), MigrationError> {
 
                 // Copy all contents from legacy directory to new directory
                 copy(&legacy_path, &current_app_data, &options).map_err(|e| {
-                    MigrationError::LegacyDataCopyFailed {
+                    MigrationError::LegacyDataCopy {
                         from: legacy_path.display().to_string(),
                         to: current_app_data.display().to_string(),
-                        source: Box::new(std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            e.to_string(),
-                        )),
+                        source: Box::new(std::io::Error::other(e.to_string())),
                     }
                 })?;
 

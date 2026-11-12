@@ -14,7 +14,7 @@ use shakmaty::{
 use specta::Type;
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -626,7 +626,7 @@ pub struct ProgressPayload {
 }
 
 /// Get total number of games in database
-fn get_total_game_count(state: &tauri::State<'_, AppState>, file: &PathBuf) -> Result<i64, Error> {
+fn get_total_game_count(state: &tauri::State<'_, AppState>, file: &Path) -> Result<i64, Error> {
     let db = &mut get_db_or_create(state, file.to_str().unwrap(), ConnectionOptions::default())?;
     use diesel::dsl::count_star;
 
@@ -638,24 +638,10 @@ fn get_total_game_count(state: &tauri::State<'_, AppState>, file: &PathBuf) -> R
 /// Load games from database in batches
 fn load_games_batch(
     state: &tauri::State<'_, AppState>,
-    file: &PathBuf,
+    file: &Path,
     offset: i64,
     limit: i64,
-) -> Result<
-    Vec<(
-        i32,
-        i32,
-        i32,
-        Option<String>,
-        Option<String>,
-        Vec<u8>,
-        Option<String>,
-        i32,
-        i32,
-        i32,
-    )>,
-    Error,
-> {
+) -> Result<Vec<SearchGameRow>, Error> {
     let db = &mut get_db_or_create(state, file.to_str().unwrap(), ConnectionOptions::default())?;
 
     let games = games::table
@@ -701,7 +687,7 @@ type SearchGameRow = (
 /// otherwise re-walk every skipped row on each batch.
 fn load_filtered_games_batch(
     state: &tauri::State<'_, AppState>,
-    file: &PathBuf,
+    file: &Path,
     after_id: i32,
     limit: i64,
     filter: Option<&str>,
@@ -967,7 +953,7 @@ pub async fn search_position(
         let final_results = games
             .par_iter()
             .fold(
-                || ThreadLocalResults::default(),
+                ThreadLocalResults::default,
                 |mut acc,
                  (
                     id,
@@ -1052,35 +1038,32 @@ pub async fn search_position(
                     acc
                 },
             )
-            .reduce(
-                || ThreadLocalResults::default(),
-                |mut acc1, acc2| {
-                    // Merge thread-local results (no contention here!)
-                    for (key, stats2) in acc2.position_stats {
-                        let stats1 =
-                            acc1.position_stats
-                                .entry(key)
-                                .or_insert_with(|| PositionStats {
-                                    move_: stats2.move_.clone(),
-                                    white: 0,
-                                    black: 0,
-                                    draw: 0,
-                                });
-                        stats1.white += stats2.white;
-                        stats1.black += stats2.black;
-                        stats1.draw += stats2.draw;
-                    }
+            .reduce(ThreadLocalResults::default, |mut acc1, acc2| {
+                // Merge thread-local results (no contention here!)
+                for (key, stats2) in acc2.position_stats {
+                    let stats1 = acc1
+                        .position_stats
+                        .entry(key)
+                        .or_insert_with(|| PositionStats {
+                            move_: stats2.move_.clone(),
+                            white: 0,
+                            black: 0,
+                            draw: 0,
+                        });
+                    stats1.white += stats2.white;
+                    stats1.black += stats2.black;
+                    stats1.draw += stats2.draw;
+                }
 
-                    // Merge matched IDs (keep within limit)
-                    for entry in acc2.matched_ids {
-                        if acc1.matched_ids.len() < MAX_RETURNED_GAMES {
-                            acc1.matched_ids.push(entry);
-                        }
+                // Merge matched IDs (keep within limit)
+                for entry in acc2.matched_ids {
+                    if acc1.matched_ids.len() < MAX_RETURNED_GAMES {
+                        acc1.matched_ids.push(entry);
                     }
+                }
 
-                    acc1
-                },
-            );
+                acc1
+            });
 
         // Extract final results (no Arc unwrapping needed)
         position_stats = final_results.position_stats;
@@ -1181,7 +1164,7 @@ pub async fn search_position(
             let batch_results = batch
                 .par_iter()
                 .fold(
-                    || ThreadLocalResults::default(),
+                    ThreadLocalResults::default,
                     |mut acc,
                      (
                         id,
@@ -1252,35 +1235,32 @@ pub async fn search_position(
                         acc
                     },
                 )
-                .reduce(
-                    || ThreadLocalResults::default(),
-                    |mut acc1, acc2| {
-                        // Merge thread-local results (no contention here!)
-                        for (key, stats2) in acc2.position_stats {
-                            let stats1 =
-                                acc1.position_stats
-                                    .entry(key)
-                                    .or_insert_with(|| PositionStats {
-                                        move_: stats2.move_.clone(),
-                                        white: 0,
-                                        black: 0,
-                                        draw: 0,
-                                    });
-                            stats1.white += stats2.white;
-                            stats1.black += stats2.black;
-                            stats1.draw += stats2.draw;
-                        }
+                .reduce(ThreadLocalResults::default, |mut acc1, acc2| {
+                    // Merge thread-local results (no contention here!)
+                    for (key, stats2) in acc2.position_stats {
+                        let stats1 =
+                            acc1.position_stats
+                                .entry(key)
+                                .or_insert_with(|| PositionStats {
+                                    move_: stats2.move_.clone(),
+                                    white: 0,
+                                    black: 0,
+                                    draw: 0,
+                                });
+                        stats1.white += stats2.white;
+                        stats1.black += stats2.black;
+                        stats1.draw += stats2.draw;
+                    }
 
-                        // Merge matched IDs (keep within limit)
-                        for entry in acc2.matched_ids {
-                            if acc1.matched_ids.len() < MAX_RETURNED_GAMES {
-                                acc1.matched_ids.push(entry);
-                            }
+                    // Merge matched IDs (keep within limit)
+                    for entry in acc2.matched_ids {
+                        if acc1.matched_ids.len() < MAX_RETURNED_GAMES {
+                            acc1.matched_ids.push(entry);
                         }
+                    }
 
-                        acc1
-                    },
-                );
+                    acc1
+                });
 
             // Merge batch results into global accumulator (single-threaded, no contention)
             for (key, batch_stat) in batch_results.position_stats {
@@ -1445,7 +1425,7 @@ pub async fn search_position(
         .unwrap_or(true); // Default to AverageElo if no options provided
 
     let sort_direction = query_options
-        .and_then(|opt| Some(opt.direction.clone()))
+        .map(|opt| opt.direction.clone())
         .unwrap_or(SortDirection::Desc); // Default to Desc if no options provided
 
     if should_sort_by_avg_elo {

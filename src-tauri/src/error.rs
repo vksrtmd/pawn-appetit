@@ -7,7 +7,7 @@ pub enum Error {
     Io(#[from] std::io::Error),
 
     #[error("I/O error: {0}")]
-    IoError(std::io::Error),
+    IoDetail(std::io::Error),
 
     #[error("Unsupported file format: {0}")]
     UnsupportedFileFormat(String),
@@ -40,7 +40,7 @@ pub enum Error {
     Reqwest(#[from] reqwest::Error),
 
     #[error(transparent)]
-    ChessPosition(#[from] shakmaty::PositionError<Chess>),
+    ChessPosition(Box<shakmaty::PositionError<Chess>>),
 
     #[error(transparent)]
     IllegalUciMove(#[from] shakmaty::uci::IllegalUciMoveError),
@@ -73,7 +73,7 @@ pub enum Error {
     FromUtf8Error(#[from] std::string::FromUtf8Error),
 
     #[error(transparent)]
-    FormatError(#[from] std::fmt::Error),
+    Fmt(#[from] std::fmt::Error),
 
     #[error("No stdin")]
     NoStdin,
@@ -119,30 +119,6 @@ pub enum Error {
     #[error("Engine initialization failed: {0}")]
     EngineInitFailed(String),
 
-    #[allow(dead_code)]
-    #[error("Engine stop timeout")]
-    EngineStopTimeout,
-
-    #[allow(dead_code)]
-    #[error("Event emission failed")]
-    EventEmissionFailed,
-
-    #[allow(dead_code)]
-    #[error("FEN parsing error: {0}")]
-    FenError(String),
-
-    #[allow(dead_code)]
-    #[error("Position setup error: {0}")]
-    PositionError(String),
-
-    #[allow(dead_code)]
-    #[error("UCI move parsing error: {0}")]
-    UciMoveError(String),
-
-    #[allow(dead_code)]
-    #[error("Illegal move error: {0}")]
-    IllegalMoveError(String),
-
     #[error("Invalid square index: {0} (expected 0-63)")]
     InvalidSquareIndex(u8),
 
@@ -151,6 +127,12 @@ pub enum Error {
 
     #[error("Exact material count is below the pieces required by the query board")]
     InvalidMaterialCount,
+}
+
+impl From<shakmaty::PositionError<Chess>> for Error {
+    fn from(e: shakmaty::PositionError<Chess>) -> Self {
+        Error::ChessPosition(Box::new(e))
+    }
 }
 
 impl serde::Serialize for Error {

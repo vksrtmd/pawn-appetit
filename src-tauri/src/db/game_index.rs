@@ -256,7 +256,7 @@ impl IndexFilter {
             })
             .collect();
 
-        mask_clauses.sort_by(|a, b| b.0.cmp(&a.0));
+        mask_clauses.sort_by_key(|c| std::cmp::Reverse(c.0));
         clauses.extend(mask_clauses.into_iter().map(|(_, clause)| clause));
 
         if let Some(reject) = self.pawn_home_reject {

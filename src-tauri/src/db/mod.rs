@@ -51,9 +51,7 @@ pub use self::models::NormalizedGame;
 pub use self::models::Puzzle;
 pub use self::progress::DatabaseProgress;
 pub use self::schema::puzzles;
-pub use self::search::{
-    is_position_in_db, search_position, PositionQuery, PositionQueryJs, PositionStats,
-};
+pub use self::search::{is_position_in_db, search_position, PositionQueryJs, PositionStats};
 
 const INDEXES_SQL: &str = include_str!("../../../database/queries/indexes/create_indexes.sql");
 const DELETE_INDEXES_SQL: &str =
@@ -170,13 +168,15 @@ pub struct DatabaseInfo {
     indexed: bool,
 }
 
-#[derive(QueryableByName, Debug, Serialize)]
-struct IndexInfo {
-    #[diesel(sql_type = Text, column_name = "name")]
-    _name: String,
-}
-
+// diesel's QueryableByName derive expands to `field: field`.
+#[allow(clippy::redundant_field_names)]
 fn check_index_exists(conn: &mut SqliteConnection) -> Result<bool> {
+    #[derive(QueryableByName)]
+    struct IndexInfo {
+        #[diesel(sql_type = Text, column_name = "name")]
+        _name: String,
+    }
+
     let query = sql_query(GAMES_CHECK_INDEXES);
     let indexes: Vec<IndexInfo> = query.load(conn)?;
     Ok(!indexes.is_empty())
@@ -332,21 +332,6 @@ pub struct QueryOptions<SortT> {
     pub page_size: Option<i32>,
     pub sort: SortT,
     pub direction: SortDirection,
-}
-
-#[derive(Debug, Clone, Default, PartialEq, Eq, Hash)]
-pub struct GameQuery {
-    pub options: Option<QueryOptions<GameSort>>,
-    pub player1: Option<i32>,
-    pub player2: Option<i32>,
-    pub tournament_id: Option<i32>,
-    pub start_date: Option<String>,
-    pub end_date: Option<String>,
-    pub range1: Option<(i32, i32)>,
-    pub range2: Option<(i32, i32)>,
-    pub sides: Option<Sides>,
-    pub outcome: Option<String>,
-    pub position: Option<PositionQuery>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq, Hash, Type)]
@@ -968,7 +953,7 @@ pub async fn get_players_game_info(
                     .unwrap_or_default();
 
                 let p = progress.fetch_add(1, Ordering::Relaxed);
-                if p % 1000 == 0 || p == info.len() - 1 {
+                if p.is_multiple_of(1000) || p == info.len() - 1 {
                     let _ = DatabaseProgress {
                         id: id.to_string(),
                         progress: (p as f64 / info.len() as f64) * 100_f64,
@@ -994,26 +979,20 @@ pub async fn get_players_game_info(
                 })
             },
         )
-        .fold(
-            || DashMap::new(),
-            |acc, data| {
-                acc.entry((data.site.clone(), data.player.clone()))
+        .fold(DashMap::new, |acc, data| {
+            acc.entry((data.site.clone(), data.player.clone()))
+                .or_insert_with(Vec::new)
+                .extend(data.data);
+            acc
+        })
+        .reduce(DashMap::new, |acc1, acc2| {
+            for ((site, player), data) in acc2 {
+                acc1.entry((site, player))
                     .or_insert_with(Vec::new)
-                    .extend(data.data);
-                acc
-            },
-        )
-        .reduce(
-            || DashMap::new(),
-            |acc1, acc2| {
-                for ((site, player), data) in acc2 {
-                    acc1.entry((site, player))
-                        .or_insert_with(Vec::new)
-                        .extend(data);
-                }
-                acc1
-            },
-        )
+                    .extend(data);
+            }
+            acc1
+        })
         .into_iter()
         .map(|((site, player), data)| SiteStatsData { site, player, data })
         .collect();
@@ -1046,7 +1025,7 @@ pub async fn get_game(
 ) -> Result<NormalizedGame> {
     let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
 
-    Ok(core::get_game(db, game_id)?)
+    core::get_game(db, game_id)
 }
 
 #[tauri::command]
