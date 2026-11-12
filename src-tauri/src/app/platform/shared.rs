@@ -5,14 +5,14 @@ use tauri::{AppHandle, Manager};
 #[derive(Debug, thiserror::Error)]
 pub enum PlatformError {
     #[error("Failed to resolve path {path}: {source}")]
-    PathResolutionFailed { path: String, source: tauri::Error },
+    PathResolution { path: String, source: tauri::Error },
     #[error("Failed to create directory {path}: {source}")]
-    DirectoryCreationFailed {
+    DirectoryCreation {
         path: String,
         source: std::io::Error,
     },
     #[error("Failed to create file {path}: {source}")]
-    FileCreationFailed {
+    FileCreation {
         path: String,
         source: std::io::Error,
     },
@@ -53,14 +53,14 @@ pub fn ensure_required_directories(app: &AppHandle) -> Result<(), PlatformError>
         let resolved_path =
             app.path()
                 .resolve(path, dir)
-                .map_err(|e| PlatformError::PathResolutionFailed {
+                .map_err(|e| PlatformError::PathResolution {
                     path: path.to_string(),
                     source: e,
                 })?;
 
         if !resolved_path.exists() {
             log::info!("Creating directory {}", resolved_path.display());
-            create_dir_all(&resolved_path).map_err(|e| PlatformError::DirectoryCreationFailed {
+            create_dir_all(&resolved_path).map_err(|e| PlatformError::DirectoryCreation {
                 path: resolved_path.display().to_string(),
                 source: e,
             })?;
@@ -85,18 +85,16 @@ pub fn ensure_required_files(app: &AppHandle) -> Result<(), PlatformError> {
         let resolved_path =
             app.path()
                 .resolve(path, dir)
-                .map_err(|e| PlatformError::PathResolutionFailed {
+                .map_err(|e| PlatformError::PathResolution {
                     path: path.to_string(),
                     source: e,
                 })?;
 
         if !resolved_path.exists() {
             log::info!("Creating file {}", resolved_path.display());
-            std::fs::write(&resolved_path, contents).map_err(|e| {
-                PlatformError::FileCreationFailed {
-                    path: resolved_path.display().to_string(),
-                    source: e,
-                }
+            std::fs::write(&resolved_path, contents).map_err(|e| PlatformError::FileCreation {
+                path: resolved_path.display().to_string(),
+                source: e,
             })?;
         } else {
             log::info!("File already exists: {}", resolved_path.display());

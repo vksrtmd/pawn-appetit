@@ -14,7 +14,7 @@ pub fn setup_tauri_app(
 
     specta_builder.mount_events(app);
 
-    let _ = log::info!("Finished tauri application initialization");
-    let _ = handle_initial_run_telemetry(&app.handle());
+    log::info!("Finished tauri application initialization");
+    let _ = handle_initial_run_telemetry(app.handle());
     Ok(())
 }

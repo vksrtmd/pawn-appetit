@@ -19,7 +19,7 @@ pub fn setup_desktop_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Buil
 pub fn init_desktop_platform(app: &tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     log::info!("Initializing desktop platform");
 
-    migration::migrate_from_legacy_apps(&app.handle())
+    migration::migrate_from_legacy_apps(app.handle())
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
 
     #[cfg(target_os = "windows")]

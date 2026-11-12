@@ -95,11 +95,9 @@ pub fn setup_tauri_plugins(
     #[cfg(mobile)]
     let builder = mobile::setup_mobile_plugins(builder);
 
-    let builder = builder
-        .invoke_handler(specta_builder.invoke_handler())
-        .manage(AppState::default());
-
     builder
+        .invoke_handler(specta_builder.invoke_handler())
+        .manage(AppState::default())
 }
 
 pub fn init_platform(app: &App) -> Result<(), Box<dyn std::error::Error>> {
@@ -111,9 +109,9 @@ pub fn init_platform(app: &App) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(mobile)]
     mobile::init_mobile_platform()?;
 
-    shared::ensure_required_directories(&app.handle())
+    shared::ensure_required_directories(app.handle())
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-    shared::ensure_required_files(&app.handle())
+    shared::ensure_required_files(app.handle())
         .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
 
     Ok(())

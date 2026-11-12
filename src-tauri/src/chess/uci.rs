@@ -41,7 +41,7 @@ impl UciCommunicator {
         command.creation_flags(super::process::CREATE_NO_WINDOW);
 
         let mut child = command.spawn()?;
-        info!("Starting engine process: {:?}", &path);
+        info!("Starting engine process: {:?}", path);
         let stdin = child.stdin.take().ok_or(Error::NoStdin)?;
         let stdout = child.stdout.take().ok_or(Error::NoStdout)?;
         let stdout_lines = BufReader::new(stdout).lines();

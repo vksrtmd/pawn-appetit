@@ -25,13 +25,13 @@ impl Default for TelemetryConfig {
 #[derive(Debug, thiserror::Error)]
 pub enum TelemetryError {
     #[error("Failed to resolve config path: {0}")]
-    PathError(String),
+    Path(String),
     #[error("Failed to read config file: {0}")]
-    ReadError(#[from] std::io::Error),
+    Read(#[from] std::io::Error),
     #[error("Failed to parse config: {0}")]
-    ParseError(#[from] serde_json::Error),
+    Parse(#[from] serde_json::Error),
     #[error("Failed to send telemetry: {0}")]
-    NetworkError(#[from] reqwest::Error),
+    Network(#[from] reqwest::Error),
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -49,7 +49,7 @@ impl TelemetryConfig {
     fn get_config_path(app: &AppHandle) -> Result<PathBuf, TelemetryError> {
         app.path()
             .resolve("telemetry_config.json", BaseDirectory::AppConfig)
-            .map_err(|e| TelemetryError::PathError(e.to_string()))
+            .map_err(|e| TelemetryError::Path(e.to_string()))
     }
 
     pub fn load(app: &AppHandle) -> Result<Self, TelemetryError> {
@@ -166,6 +166,7 @@ async fn get_user_country_from_api() -> Option<String> {
     None
 }
 
+#[allow(clippy::unnecessary_lazy_evaluations)]
 fn get_user_country_from_locale() -> Option<String> {
     std::env::var("LC_ALL")
         .or_else(|_| std::env::var("LC_CTYPE"))
@@ -181,6 +182,8 @@ fn get_user_country_from_locale() -> Option<String> {
             }
             None
         })
+        // Lazy on purpose: the fallback spawns a process, and on non-Windows,
+        // non-macOS targets clippy sees only `None` and asks for `.or(None)`.
         .or_else(|| {
             #[cfg(target_os = "windows")]
             {
@@ -252,7 +255,7 @@ async fn track_event_to_supabase(event_name: &str, app: &AppHandle) -> Result<()
 
     let client = reqwest::Client::new();
     let response = client
-        .post(&format!("{}/rest/v1/telemetry_events", supabase_url))
+        .post(format!("{}/rest/v1/telemetry_events", supabase_url))
         .header("apikey", supabase_key)
         .header("Authorization", format!("Bearer {}", supabase_key))
         .header("Content-Type", "application/json")

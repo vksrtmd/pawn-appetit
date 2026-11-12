@@ -109,15 +109,6 @@ pub struct ReportProgress {
     pub finished: bool,
 }
 
-/// Cache key for analysis results (used for deduplication).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct AnalysisCacheKey {
-    pub tab: String,
-    pub fen: String,
-    pub engine: String,
-    pub multipv: u16,
-}
-
 /// UCI engine configuration (name and available options).
 #[derive(Type, Default, Serialize, Debug)]
 pub struct EngineConfig {
