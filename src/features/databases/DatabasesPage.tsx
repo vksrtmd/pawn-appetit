@@ -32,6 +32,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { Link, useNavigate, useSearch } from "@tanstack/react-router";
 import { listen } from "@tauri-apps/api/event";
+import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { readDir } from "@tauri-apps/plugin-fs";
 import { useAtom } from "jotai";
@@ -1310,7 +1311,6 @@ function IndexInput({
 }
 
 async function fetchPuzzleFiles() {
-  const { appDataDir, resolve } = await import("@tauri-apps/api/path");
   const appDir = await appDataDir();
   const puzzlesDir = await resolve(appDir, "puzzles");
   try {

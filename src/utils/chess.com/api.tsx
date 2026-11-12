@@ -216,11 +216,6 @@ export async function downloadChessCom(player: string, timestamp: number | null)
   });
 }
 
-const chessComGameSchema = z.object({
-  moveList: z.string(),
-  pgnHeaders: z.record(z.string(), z.string()),
-});
-
 // This new schema matches the nested structure of the API response
 const chessComGameCallbackSchema = z.object({
   game: z.object({

@@ -132,6 +132,7 @@ export default function PracticePage() {
         setTimeout(() => handleNextExercise(), 1500);
       }
     },
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- handleNextExercise is declared after this callback (TDZ)
     [selectedCategory, selectedExercise, userStats, setUserStats, stopTimer],
   );
 

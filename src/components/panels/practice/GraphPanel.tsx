@@ -495,6 +495,7 @@ function GraphPanel() {
     nodeGroups.exit().remove();
 
     updateSelection(root);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- adding the helper functions (recreated each render) would re-run the zoom/centering effect every render
   }, [rootData, currentPosition, goToMove, mainLineOnly, showTranspositions, collapsedNodes]);
 
   return (

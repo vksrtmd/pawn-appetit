@@ -28,7 +28,7 @@ export const PuzzleStatistics = ({ currentPuzzle }: PuzzleStatisticsProps) => {
   // Check for new max rating
   useEffect(() => {
     if (playerRating > maxPlayerRating) {
-      PUZZLE_DEBUG_LOGS &&
+      if (PUZZLE_DEBUG_LOGS)
         logger.debug("New max rating achieved:", {
           oldMax: Math.round(maxPlayerRating),
           newMax: Math.round(playerRating),

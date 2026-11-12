@@ -26,7 +26,6 @@ import { commands, type DatabaseInfo, events, type PuzzleDatabaseInfo } from "@/
 import FileInput from "@/components/FileInput";
 import ProgressButton from "@/components/ProgressButton";
 import {
-  getDatabases,
   getDefaultPuzzleDatabases,
   type SuccessDatabaseInfo,
   useDefaultDatabases,

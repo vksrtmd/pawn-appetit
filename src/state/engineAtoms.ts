@@ -22,24 +22,22 @@ export const loadableEnginesAtom = loadable(enginesAtom);
 
 // CP / WDL display mode
 export const reportTypeAtom = atom<"CP" | "WDL">("CP");
-export const scoreTypeFamily = atomFamily((engine: string) => atom<"cp" | "wdl">("cp"));
+export const scoreTypeFamily = atomFamily((_engine: string) => atom<"cp" | "wdl">("cp"));
 
 // Per-engine-tab move/progress atoms
 export const engineMovesFamily = atomFamily(
-    ({ tab, engine }: { tab: string; engine: string }) => atom<Map<string, BestMoves[]>>(new Map()),
+    (_: { tab: string; engine: string }) => atom<Map<string, BestMoves[]>>(new Map()),
     (a, b) => a.tab === b.tab && a.engine === b.engine,
 );
 
 export const engineProgressFamily = atomFamily(
-    ({ tab, engine }: { tab: string; engine: string }) => atom<number>(0),
+    (_: { tab: string; engine: string }) => atom<number>(0),
     (a, b) => a.tab === b.tab && a.engine === b.engine,
 );
 
 // Per-engine-tab settings (enabled state, go mode, uci options)
 export const tabEngineSettingsFamily = atomFamily(
     ({
-        tab,
-        engineName,
         defaultSettings,
         defaultGo,
     }: {

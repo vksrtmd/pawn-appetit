@@ -1,7 +1,6 @@
 import { Button, Group, Modal, Progress, Radio, Stack, Text } from "@mantine/core";
 import { useForm } from "@mantine/form";
 import { useEffect, useRef, useState } from "react";
-import { useTranslation } from "react-i18next";
 
 export type AnalysisSpeed = "express" | "swift" | "focused" | "advanced" | "deepdive";
 
@@ -30,7 +29,6 @@ interface AnalyzeAllModalProps {
 }
 
 export function AnalyzeAllModal({ opened, onClose, onAnalyze, gameCount }: AnalyzeAllModalProps) {
-  const { t } = useTranslation();
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const cancelledRef = useRef(false);

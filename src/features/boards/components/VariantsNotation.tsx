@@ -5,35 +5,21 @@ import {
   Group,
   Overlay,
   Paper,
-  rgba,
   ScrollArea,
   Stack,
   Text,
   Tooltip,
   useMantineColorScheme,
-  useMantineTheme,
 } from "@mantine/core";
 import { useColorScheme, useHotkeys, useToggle } from "@mantine/hooks";
-import {
-  IconArticle,
-  IconArticleOff,
-  IconChevronDown,
-  IconChevronRight,
-  IconEye,
-  IconEyeOff,
-  IconPoint,
-  IconPointFilled,
-} from "@tabler/icons-react";
-import { INITIAL_FEN } from "chessops/fen";
+import { IconArticle, IconArticleOff, IconEye, IconEyeOff } from "@tabler/icons-react";
 import equal from "fast-deep-equal";
 import { useAtom, useAtomValue } from "jotai";
-import React, { useContext, useEffect, useRef, useState } from "react";
+import React, { useContext, useEffect, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { Comment } from "@/components/Comment";
 import CompleteMoveCell from "@/components/CompleteMoveCell";
-import * as styles from "@/components/GameNotation.css";
-import * as moveStyles from "@/components/MoveCell.css";
 import OpeningName from "@/components/OpeningName";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { currentInvisibleAtom } from "@/state/atoms";
@@ -44,16 +30,7 @@ const variationRefs = {
   variants: React.createRef<HTMLSpanElement | null>(),
 };
 
-function hasMultipleChildrenInChain(node: TreeNode): boolean {
-  if (!node.children) return false;
-  if (node.children.length > 1) return true;
-  if (node.children.length === 1) {
-    return hasMultipleChildrenInChain(node.children[0]);
-  }
-  return false;
-}
-
-function VariantsNotation({ topBar, editingMode }: { topBar?: boolean; editingMode?: boolean }) {
+function VariantsNotation({ topBar }: { topBar?: boolean; editingMode?: boolean }) {
   const store = useContext(TreeStateContext);
   if (!store) {
     throw new Error("VariantsNotation must be used within a TreeStateProvider");
@@ -62,7 +39,6 @@ function VariantsNotation({ topBar, editingMode }: { topBar?: boolean; editingMo
   const root = useStore(store, (s) => s.root);
   const currentFen = useStore(store, (s) => s.currentNode().fen);
   const headers = useStore(store, (s) => s.headers);
-  const position = useStore(store, (s) => s.position);
 
   const viewport = useRef<HTMLDivElement>(null);
   const [invisibleValue, setInvisible] = useAtom(currentInvisibleAtom);
@@ -72,7 +48,6 @@ function VariantsNotation({ topBar, editingMode }: { topBar?: boolean; editingMo
   const osColorScheme = useColorScheme();
   const keyMap = useAtomValue(keyMapAtom);
   const { t } = useTranslation();
-  const theme = useMantineTheme();
 
   useHotkeys([[keyMap.TOGGLE_BLUR.keys, () => setInvisible((prev: boolean) => !prev)]]);
 
@@ -85,34 +60,6 @@ function VariantsNotation({ topBar, editingMode }: { topBar?: boolean; editingMo
     }
   }, [currentFen]);
 
-  // Collect all variations from a tree node (all children except the first one)
-  // This function traverses the main line and collects all variations that branch off
-  function collectAllVariations(
-    node: TreeNode,
-    currentPath: number[],
-  ): Array<{ variation: TreeNode; path: number[]; parentHalfMoves: number }> {
-    const variations: Array<{ variation: TreeNode; path: number[]; parentHalfMoves: number }> = [];
-
-    // If this node has multiple children, add the variations (all except the first one)
-    if (node.children.length > 1) {
-      node.children.slice(1).forEach((variation, index) => {
-        variations.push({
-          variation,
-          path: [...currentPath, index + 1],
-          parentHalfMoves: node.halfMoves,
-        });
-      });
-    }
-
-    // Recursively collect variations from the main line (first child)
-    if (node.children.length > 0) {
-      const mainLineVariations = collectAllVariations(node.children[0], [...currentPath, 0]);
-      variations.push(...mainLineVariations);
-    }
-
-    return variations;
-  }
-
   // Render a complete variation line (continuation of a variation)
   // This renders the main line continuation and shows variations after each move
   function RenderVariationLine({
@@ -121,22 +68,17 @@ function VariantsNotation({ topBar, editingMode }: { topBar?: boolean; editingMo
     depth = 0,
     first = false,
     targetRef,
-    showVariationsAfter = true,
-    indentSize = 0,
   }: {
     tree: TreeNode;
     path: number[];
     depth?: number;
     first?: boolean;
     targetRef: React.RefObject<HTMLSpanElement | null>;
-    showVariationsAfter?: boolean;
-    indentSize?: number;
   }) {
     // If this node has a move (san), render it
     if (tree.san) {
       const currentPath = path;
       const variations = tree.children;
-      const subVariations = variations && variations.length > 1 ? variations.slice(1) : [];
 
       return (
         <>
@@ -164,8 +106,6 @@ function VariantsNotation({ topBar, editingMode }: { topBar?: boolean; editingMo
                   depth={depth + 1}
                   start={headers.start}
                   targetRef={targetRef}
-                  parentHalfMoves={tree.halfMoves}
-                  isRootLevel={false}
                 />
               ))}
             </>
@@ -176,8 +116,6 @@ function VariantsNotation({ topBar, editingMode }: { topBar?: boolean; editingMo
               path={[...path, 0]}
               depth={depth + 1}
               targetRef={targetRef}
-              showVariationsAfter={showVariationsAfter}
-              indentSize={indentSize}
             />
           ) : null}
         </>
@@ -189,7 +127,6 @@ function VariantsNotation({ topBar, editingMode }: { topBar?: boolean; editingMo
     if (!variations?.length) return null;
 
     const newPath = [...path, 0];
-    const subVariations = variations.length > 1 ? variations.slice(1) : [];
 
     return (
       <>
@@ -217,8 +154,6 @@ function VariantsNotation({ topBar, editingMode }: { topBar?: boolean; editingMo
                 depth={depth + 1}
                 start={headers.start}
                 targetRef={targetRef}
-                parentHalfMoves={root.halfMoves}
-                isRootLevel={false}
               />
             ))}
           </>
@@ -229,8 +164,6 @@ function VariantsNotation({ topBar, editingMode }: { topBar?: boolean; editingMo
             path={newPath}
             depth={depth + 1}
             targetRef={targetRef}
-            showVariationsAfter={showVariationsAfter}
-            indentSize={indentSize}
           />
         )}
       </>
@@ -246,16 +179,12 @@ function VariantsNotation({ topBar, editingMode }: { topBar?: boolean; editingMo
     depth,
     start,
     targetRef,
-    parentHalfMoves,
-    isRootLevel = false,
   }: {
     variation: TreeNode;
     path: number[];
     depth: number;
     start?: number[];
     targetRef: React.RefObject<HTMLSpanElement | null>;
-    parentHalfMoves?: number;
-    isRootLevel?: boolean;
   }) {
     // Don't render if variation has no move and no children
     if (!variation.san && !variation.children?.length) return null;
@@ -269,7 +198,6 @@ function VariantsNotation({ topBar, editingMode }: { topBar?: boolean; editingMo
     const firstMoveSan = variation.san;
 
     // Get sub-variations from this variation (all children except the first one)
-    const subVariations = variation.children.length > 1 ? variation.children.slice(1) : [];
 
     // Calculate indentation based on depth (each level adds 0.75rem for subtle code-like indentation)
     const indentSize = depth * 0.75;
@@ -308,8 +236,6 @@ function VariantsNotation({ topBar, editingMode }: { topBar?: boolean; editingMo
                 depth={depth + 1}
                 start={start}
                 targetRef={targetRef}
-                parentHalfMoves={variation.halfMoves}
-                isRootLevel={false}
               />
             ))}
           </>
@@ -320,8 +246,6 @@ function VariantsNotation({ topBar, editingMode }: { topBar?: boolean; editingMo
             path={[...path, 0]}
             depth={depth + 1}
             targetRef={targetRef}
-            showVariationsAfter={true}
-            indentSize={indentSize}
           />
         ) : null}
       </>
@@ -398,8 +322,6 @@ function VariantsNotation({ topBar, editingMode }: { topBar?: boolean; editingMo
                           depth={0}
                           start={headers.start}
                           targetRef={variationRefs.variants}
-                          parentHalfMoves={root.halfMoves}
-                          isRootLevel={false}
                         />
                       ))}
                     </>

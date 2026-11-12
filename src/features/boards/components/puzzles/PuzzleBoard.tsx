@@ -1,6 +1,6 @@
 import { Box } from "@mantine/core";
 import { useElementSize, useForceUpdate, useHotkeys } from "@mantine/hooks";
-import { type Move, makeUci, type NormalMove, parseSquare } from "chessops";
+import { type Move, type NormalMove, parseSquare } from "chessops";
 import { chessgroundDests, chessgroundMove } from "chessops/compat";
 import equal from "fast-deep-equal";
 import { useAtomValue, useSetAtom } from "jotai";
@@ -103,7 +103,7 @@ function PuzzleBoard({
 
     const expectedMove = puzzle.moves[currentMove];
 
-    PUZZLE_DEBUG_LOGS &&
+    if (PUZZLE_DEBUG_LOGS)
       logger.debug("Checking move:", {
         uci,
         expectedMove,
@@ -122,7 +122,7 @@ function PuzzleBoard({
         setEnded(false);
 
         if (db && (jumpToNext === "success" || jumpToNext === "success-and-failure")) {
-          PUZZLE_DEBUG_LOGS && logger.debug("Auto-generating next puzzle (success)");
+          if (PUZZLE_DEBUG_LOGS) logger.debug("Auto-generating next puzzle (success)");
           generatePuzzle(db);
         }
       }
@@ -142,7 +142,7 @@ function PuzzleBoard({
         changeCompletion("incorrect");
 
         if (db && jumpToNext === "success-and-failure") {
-          PUZZLE_DEBUG_LOGS && logger.debug("Auto-generating next puzzle (failure)");
+          if (PUZZLE_DEBUG_LOGS) logger.debug("Auto-generating next puzzle (failure)");
           generatePuzzle(db);
         }
       }

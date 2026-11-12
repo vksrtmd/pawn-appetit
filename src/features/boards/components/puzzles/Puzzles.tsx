@@ -77,7 +77,7 @@ function Puzzles({ id }: { id: string }) {
       range = calculateProgressiveRange();
     }
 
-    PUZZLE_DEBUG_LOGS &&
+    if (PUZZLE_DEBUG_LOGS)
       logger.debug("Generating puzzle:", {
         db: selectedDb,
         range,
@@ -88,7 +88,7 @@ function Puzzles({ id }: { id: string }) {
 
     try {
       const puzzle = await generatePuzzleFromDb(selectedDb, range, inOrder);
-      PUZZLE_DEBUG_LOGS &&
+      if (PUZZLE_DEBUG_LOGS)
         logger.debug("Generated puzzle:", {
           fen: puzzle.fen,
           rating: puzzle.rating,
@@ -113,7 +113,7 @@ function Puzzles({ id }: { id: string }) {
     min = Math.max(minRating, Math.min(min, maxRating));
     max = Math.max(minRating, Math.min(max, maxRating));
 
-    PUZZLE_DEBUG_LOGS &&
+    if (PUZZLE_DEBUG_LOGS)
       logger.debug("Adaptive range calculation:", {
         playerRating,
         recentResults: completedResults,
@@ -127,7 +127,7 @@ function Puzzles({ id }: { id: string }) {
   };
 
   const handleClearSession = () => {
-    PUZZLE_DEBUG_LOGS && logger.debug("Clearing puzzle session");
+    if (PUZZLE_DEBUG_LOGS) logger.debug("Clearing puzzle session");
     clearSession();
     if (selectedDb) {
       clearPuzzleCache(selectedDb);
@@ -141,7 +141,7 @@ function Puzzles({ id }: { id: string }) {
   };
 
   const handleDatabaseChange = (value: string | null) => {
-    PUZZLE_DEBUG_LOGS && logger.debug("Database changed:", value);
+    if (PUZZLE_DEBUG_LOGS) logger.debug("Database changed:", value);
 
     if (value === "add") {
       navigateToDatabasesWithModal(navigate, {

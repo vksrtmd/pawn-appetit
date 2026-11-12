@@ -69,6 +69,7 @@ function ReportModal({
           : reportSettings.engine;
 
     form.setValues({ ...reportSettings, engine });
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on engine count and settings; form and localEngines change identity every render
   }, [localEngines.length, reportSettings]);
 
   const handleStop = async () => {

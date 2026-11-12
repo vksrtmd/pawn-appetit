@@ -25,6 +25,7 @@ import { activeTabAtom, enginesAtom, sessionsAtom, tabsAtom } from "@/state/atom
 import { useUserStatsStore } from "@/state/userStatsStore";
 import { type Achievement, getAchievements } from "@/utils/achievements";
 import { getAllAnalyzedGames, saveAnalyzedGame } from "@/utils/analyzedGames";
+import { addAnalysis } from "@/state/store/tree";
 import { getMainLine, getPGN, parsePGN } from "@/utils/chess";
 import { type ChessComGame, fetchLastChessComGames } from "@/utils/chess.com/api";
 import { type DailyGoal, getDailyGoals } from "@/utils/dailyGoals";
@@ -974,7 +975,6 @@ export default function DashboardPage() {
 
               // Use the same addAnalysis function from the store to ensure consistency
               // This ensures the same logic is used for both individual and batch analysis
-              const { addAnalysis } = await import("@/state/store/tree");
 
               // Apply analysis using the same function used in individual analysis
               // This ensures consistency and prevents PGN damage

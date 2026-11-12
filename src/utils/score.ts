@@ -191,7 +191,7 @@ export function getAnnotation(
     prevMoves: BestMoves[],
     is_sacrifice?: boolean,
     move?: string,
-    currentBestMoves?: BestMoves[],
+    _currentBestMoves?: BestMoves[],
 ): Annotation {
     // Normalize from the perspective of the player making the move
     const basePrevScore: ScoreValue = prev ?? { type: "cp", value: 0 };

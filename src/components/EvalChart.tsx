@@ -142,6 +142,7 @@ function EvalChart(props: EvalChartProps) {
         if (match) goToMove(match.movePath);
       }
     },
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- data is rebuilt every render; memoizing it would change recompute behaviour
     [data, goToMove],
   );
 
@@ -152,6 +153,7 @@ function EvalChart(props: EvalChartProps) {
 
   const isWDLDisabled = useMemo(() => {
     return !data.some((point) => point.White !== 0 || point.Black !== 0 || point.Draw !== 0);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- data is rebuilt every render; memoizing it would change recompute behaviour
   }, [data]);
 
   return (

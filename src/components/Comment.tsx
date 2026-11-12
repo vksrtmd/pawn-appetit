@@ -16,7 +16,7 @@ export function Comment({ comment }: { comment: string }) {
     >
       <Markdown
         components={{
-          a: ({ node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
+          a: ({ node: _node, ...props }) => <a {...props} target="_blank" rel="noreferrer" />,
           p: ({ children }) => (
             <span
               style={{

@@ -515,7 +515,6 @@ function innerParsePGN(
 ): TreeState {
     const tree = defaultTree(fen);
     let root = tree.root;
-    let prevNode = root;
     // Keep track of the parent node where variations should be added
     // This is the node before the current move, updated after each move
     let variationParentNode = root;
@@ -745,7 +744,6 @@ function innerParsePGN(
             // Variations in PGN appear after a move but refer to the position BEFORE that move
             // So variations should be added to the parent node (root) before we move to the new node
             variationParentNode = root;
-            prevNode = root;
             root = newTree;
             i++;
         } else if (token.type === "Outcome") {

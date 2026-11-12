@@ -98,6 +98,7 @@ export function Chessground({
       chessgroundApi.destroy?.();
       setApi(null);
     };
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- mount-only init; re-creating the board on config change would reset it
   }, []);
 
   useEffect(() => {
@@ -121,6 +122,7 @@ export function Chessground({
     };
 
     api.set(config);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- config is rebuilt each render; deps are an intentional subset to avoid re-applying on unrelated changes
   }, [
     api,
     handleChange,
