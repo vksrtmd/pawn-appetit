@@ -525,7 +525,14 @@ function DatabaseCard({ setDatabases, database, databaseId, initInstalled }: Dat
         setDatabases();
       } catch (error) {
         console.error("Failed to download database:", error);
-        setDownloadError(error instanceof Error ? error.message : t("features.databases.add.errorDownload", "Failed to download database. Please check your connection and try again."));
+        setDownloadError(
+          error instanceof Error
+            ? error.message
+            : t(
+                "features.databases.add.errorDownload",
+                "Failed to download database. Please check your connection and try again.",
+              ),
+        );
       } finally {
         setInProgress(false);
       }
@@ -619,7 +626,14 @@ function PuzzleDbCard({ setPuzzleDbs, puzzleDb, databaseId, initInstalled }: Puz
         await setPuzzleDbs(await getPuzzleDatabases());
       } catch (error) {
         console.error("Failed to download puzzle database:", error);
-        setDownloadError(error instanceof Error ? error.message : t("features.databases.add.errorDownload", "Failed to download database. Please check your connection and try again."));
+        setDownloadError(
+          error instanceof Error
+            ? error.message
+            : t(
+                "features.databases.add.errorDownload",
+                "Failed to download database. Please check your connection and try again.",
+              ),
+        );
       } finally {
         setInProgress(false);
       }
