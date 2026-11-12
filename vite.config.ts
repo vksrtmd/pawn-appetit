@@ -45,5 +45,8 @@ export default defineConfig({
     test: {
         environment: "jsdom",
         env: { TZ: "UTC" },
+        // Node 25+ ships a global localStorage that is undefined without
+        // --localstorage-file and shadows jsdom's; turn it off in workers.
+        execArgv: ["--no-experimental-webstorage"],
     },
 });
