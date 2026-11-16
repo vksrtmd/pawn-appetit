@@ -49,6 +49,7 @@ import { QuickActionsGrid } from "./components/QuickActionsGrid";
 import { type Suggestion, SuggestionsCard } from "./components/SuggestionsCard";
 import { UserProfileCard } from "./components/UserProfileCard";
 import { WelcomeCard } from "./components/WelcomeCard";
+import { ImprovementDashboardPrototype } from "./prototype-improvement";
 import { getChessTitle } from "./utils/chessTitle";
 import {
   createChessComGameHeaders,
@@ -623,7 +624,7 @@ export default function DashboardPage() {
     },
   ].filter((action): action is NonNullable<typeof action> => action !== null);
 
-  return (
+  const legacy = (
     <Stack p="md" gap="md">
       <WelcomeCard
         isFirstOpen={isFirstOpen}
@@ -1135,4 +1136,5 @@ export default function DashboardPage() {
       />
     </Stack>
   );
+  return <ImprovementDashboardPrototype legacy={legacy} />;
 }
