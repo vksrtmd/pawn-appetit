@@ -12,6 +12,43 @@ The research proxy reached only `github.com`, `api.github.com` and `raw.githubus
 
 The "2000+" slice is a gap in the evidence. I found no thread where a 2000+ player describes their own toolchain. The r/chess searches returned nothing and reddit.com is blocked. The forum posters I did reach are mostly not 2000+, and one review says outright that Aimchess targets 800-1800. Treat "what 2000+ players do" as an inference, not an observation.
 
+## Update 2026-11-16: re-run from an unrestricted network
+
+Most blocked hosts were reachable in a second run (outside the proxy). That run overturns implication 1: **retrying your own mistakes across games, with spaced repetition, already exists.** The gap is narrower than first stated.
+
+**Existing own-mistake retry tools** [P unless marked]
+- **Aimchess "Retry Mistakes"**: built from the Player's past mistakes. The homepage says it finds the most common opening mistakes and uses spaced repetition to teach the right move. It re-shows a missed puzzle a little later. https://aimchess.com, https://apps.apple.com/tt/app/aimchess/id1524941307
+- **Demand and complaints, first-hand**: a Chess.com user who wants to drill lots of "_my own_ past mistakes/blunders" calls Aimchess the closest thing. Two complaints: it pulls mistakes from too far back, so they're irrelevant, and it treats everything but the best move as a full blunder. https://www.chess.com/forum/view/general/app-for-drilling-your-past-blunders?lc=1
+- **Blunders.ai**: spaced repetition over tactics and blunders from your own games. https://huntscreens.com/pt/products/blundersai
+- **chess-self-coach** (open source): fetches Lichess and Chess.com games, finds blunders with Stockfish and tablebases, drills the correct moves with spaced repetition. https://pypi.org/project/chess-self-coach/0.3.11/
+- **Chessigma Blunder Shield**: positions from your games where you were about to hang a piece. The page doesn't say how drills are scheduled. https://chessigma.com/supercoach
+- **Masterboard** [U]: advertises as free, local-first, with FSRS training on your own blunders, which would make it the closest competitor. Only an admin login page was reachable, so what it ships is unconfirmed. https://masterboard-internal.pages.dev/
+
+**Re-checked claims from the first run**
+- Aimchess "symptoms, not causes": supported. An independent review says its advice is diagnosis ("practice rook endgames") rather than pedagogy. https://aicentral.substack.com/p/experience-beats-analysis
+- Aimchess targets 800–1800: **not confirmed**. The homepage speaks only of improving your rating. Drop the claim. Pricing: free tier with a monthly 40-game report; Premium $7.99/month.
+- Chess.com Game Review distrust: confirmed, mainly of the estimated rating. Users say it inflates (75 accuracy at 2000 estimated near 2200) and anchors on actual rating; another calls it "just a toy" and notes the accuracy formula changed. https://www.chess.com/forum/view/game-analysis/is-chess-coms-rating-estimator-accurate, https://www.chess.com/forum/view/for-beginners/why-600-on-chess-com-feels-off-a-data-driven-look-at-the-rating-landscape?lc=1
+- "Game Review disagrees with Insights": no source found. Drop it.
+
+**ChessBase, Chessable, Chess Tempo, Listudy** (were [U])
+- **Chess Tempo**: likely the strongest self-study tool. Sets target your previous mistakes, repeat until correct, and support spaced repetition; the repertoire trainer is spaced-repetition too. The mistakes are on Chess Tempo's own puzzles, not your games. One commenter rates its opening trainer above Chessable's for managing your own repertoire. https://www.iphoneaddict.fr/apps/education/chesstempo-train-learn-play.html, https://zwischenzug.substack.com/p/spaced-repetition/comments
+- **Chessable**: a course store built on the MoveTrainer drill. Usual complaint: hard to create and update your own material. Doesn't import your games. Some players build a custom course of their own blunders by hand, the same manual export as Chessli to Anki. https://zwischenzug.substack.com/p/spaced-repetition, https://ankichess.pages.dev/blog/ankichess-vs-chessable-vs-listudy, https://nickvasquezmd.substack.com/p/analyzing-our-games/comments
+- **Listudy**: free, open source, spaced repetition over uploaded PGNs. By its own account it helps only with memorising openings. One user notes there are no review reminders. https://listudy.org/de/blog/learning-chess-openings, https://listudy.org/nl/blog/memorizing-chess-openings
+- **ChessBase '26**: Style Report, Error Report with a "Blunder Elo" (strength in complex positions from error rate, a reference point), and Identify Player matching Lichess and Chess.com usernames. The player's guide describes no own-mistake training and no spaced repetition. Its player profiling bears on #16 (opponent prep). https://en.chessbase.com/post/chessbase-2026-a-players-guide-3
+- **En Croissant**: FSRS for repertoire training only, nothing for own mistakes, so Pawn Appétit inherits none. https://www.mintlify.com/franciscoBSalgueiro/en-croissant/features/repertoire-training
+
+**What 2000+ players use** (still mostly inference)
+- A 2000-rated player reviews with Chess.com analysis and saves misplayed positions as flashcards. He wrote the app he uses, and the article doesn't mention spaced repetition. https://chessvision.ai/blog/how-i-reached-2000-on-chess-com-studying-with-my-own-app/
+- A coach describes the common setup: all games in one Lichess Study, instructive positions from your own games in another. https://zwischenzug.substack.com/p/the-4-lichess-studies-i-make-for
+- Pattern: manual capture, then review. Reddit and the Lichess forums weren't searched directly; no survey found.
+
+**Revised implications** (replace 1 and amend 3 below)
+1. "Retry my Errors across games, spaced" is **not** a differentiator by itself. Aimchess, Blunders.ai, chess-self-coach and possibly Masterboard ship it. What still looks unclaimed is the combination: a free desktop app; own Mistake Positions scheduled with FSRS, the same scheduler as Repertoire Review; recent Errors first; lenient grading of non-best moves; and Weaknesses that name a cause.
+3. Weakness-names-a-cause is now better supported (independent review of Aimchess).
+- New: Card grading must accept good-enough moves. A strict "only the best move" grade is a named complaint about Aimchess.
+- New: favour recent Mistake Positions; stale ones are a named complaint.
+- New: ChessBase's "Blunder Elo" is prior art for the reference-point problem (implication 4).
+
 ## Per tool
 
 ### Lichess Insights, Learn from your mistakes, Studies
@@ -67,11 +104,11 @@ Features [U] (docs blocked). Complaints, all [S] from chess.com forum threads, m
 | Slice own games by many dimensions | lila Insights dimension list | Lichess Insights | P |
 | Cross-platform (both Accounts) in one view | Aimchess reviews; Insights is Lichess-only | Aimchess | S |
 | Retry Errors from own games | lila #6980, #3437, forum threads | Lichess (latest game only) | P/S |
-| Retry Errors across all games, not one | lila #6980; forum thread | none found | P/S |
+| Retry Errors across all games, not one | lila #6980; forum thread; 2026-11-16 re-run | Aimchess, Blunders.ai, chess-self-coach | P |
 | Peer-relative benchmark ("is 75% good for my rating") | lila #16950 | none found in Insights | P |
 | Name the cause (pattern/Weakness), not just the stat | mychessplan review; improvemychess/chessdock summaries | partly Aimchess | S |
 | Link diagnosis to a drill | search summary of Insights vs Aimchess | Aimchess (plans) | S |
-| Spaced repetition of own-game mistakes | Chessli to Anki; no first-party tool found | none found | S |
+| Spaced repetition of own-game mistakes | Chessli to Anki; 2026-11-16 re-run | Aimchess (openings), Blunders.ai, chess-self-coach; Masterboard unverified | P |
 | Trustworthy Error grading (centipawn vs human plan) | Chess.com threads; Aimchess review | complaint against both | S |
 | Data completeness and clear metric definitions | lila #5704, #20971 | complaint against Insights | P |
 
@@ -98,7 +135,7 @@ Checked in `/Users/dmtrskv/work/claude/pawn-appetit/.claude/worktrees/research-i
 
 ## Implications for the spec
 
-1. The clearest unmet need, backed by primary sources, is "retry my Errors across all my games" (lila #6980) and "serve them as drills" (forum threads). This is the Mistake Position stage. The first-party tools I could verify cover only the latest game, so a cross-game version is a differentiator. Pawn Appétit already has the Error grading and batch review needed to feed it.
+1. **Superseded by the 2026-11-16 update above.** The clearest unmet need, backed by primary sources, is "retry my Errors across all my games" (lila #6980) and "serve them as drills" (forum threads). This is the Mistake Position stage. The first-party tools I could verify cover only the latest game, so a cross-game version is a differentiator. Pawn Appétit already has the Error grading and batch review needed to feed it.
 2. Decide the knowledge-of-the-answer problem up front: the forum thread notes you remember your own mistake. Scheduling a Mistake Position as a Card (delay, then spaced repeat) is a design answer.
 3. Weakness needs a named cause (phase, piece, motif), not only a statistic. The Aimchess criticism "symptoms, not causes" and lila #16950 both point here. Pawn Appétit has no tagging yet.
 4. A peer benchmark (lila #16950) is optional but a real complaint. It needs rating-band reference data that Pawn Appétit does not have.
