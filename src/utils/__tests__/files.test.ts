@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { openFile, openFileAndRemember } from "../files";
 import { getRecentFiles } from "../recentFiles";
 import { deserializeStorageValue } from "../tabStateStorage";
 
@@ -69,7 +70,6 @@ describe("openFile", () => {
     });
 
     test("loads only the first PGN game into a new file-backed tab", async () => {
-        const { openFile } = await import("../files");
         const setTabs = vi.fn<() => void>();
         const setActiveTab = vi.fn<() => void>();
 
@@ -100,8 +100,6 @@ describe("openFile", () => {
     });
 
     test("records a recent PGN after a successful open", async () => {
-        const { openFileAndRemember } = await import("../files");
-
         await openFileAndRemember("/docs/recent.pgn", vi.fn<() => void>(), vi.fn<() => void>());
 
         expect(getRecentFiles()).toEqual([
@@ -114,7 +112,6 @@ describe("openFile", () => {
 
     test("opens a PGN when sidecar metadata is outside the fs scope", async () => {
         mocks.exists.mockRejectedValue(new Error("path not allowed on the configured scope"));
-        const { openFile } = await import("../files");
 
         await openFile(
             "/home/daniel/Downloads/Naroditsky-Bortnyk_Jobava-London.pgn",
