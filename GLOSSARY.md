@@ -36,6 +36,14 @@ _Avoid_: ?
 The mildest Error: a move that gives up a little without changing the outcome.
 _Avoid_: Inaccuracy, ?!
 
+**Error Rate**:
+How often the Player makes Mistakes and Blunders, counted per 100 of their moves. It is the main measure of whether they are improving.
+_Avoid_: Blunder rate, error percentage, accuracy
+
+**Review Standard**:
+The engine and search budget that Game Reviews are judged under. Only Game Reviews made under the same Review Standard are compared.
+_Avoid_: Analysis settings, engine profile
+
 **Mistake Position**:
 A position from one of the Player's own games where they made an Error, kept so they can retry it.
 _Avoid_: Own-game puzzle, mistake puzzle
