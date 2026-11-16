@@ -48,5 +48,9 @@ export default defineConfig({
         // Node 25+ ships a global localStorage that is undefined without
         // --localstorage-file and shadows jsdom's; turn it off in workers.
         execArgv: ["--no-experimental-webstorage"],
+        // Every run also writes its results to disk, so a failure seen once
+        // (a flaky test) keeps its name after the terminal output is gone.
+        reporters: ["default", "json"],
+        outputFile: { json: "node_modules/.vitest/last-run.json" },
     },
 });
