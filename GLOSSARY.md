@@ -62,6 +62,10 @@ _Avoid_: Practice, repertoire practice
 A tactic taken from a puzzle database rather than from the Player's own games.
 _Avoid_: Exercise, problem
 
+**Training Session**:
+One day's training: the Player's due and new Cards, plus Puzzles chosen for a Weakness.
+_Avoid_: Practice, workout, daily review
+
 **Exercise**:
 One hand-authored training position with a known solution, part of a Lesson or a Course.
 _Avoid_: Practice, puzzle
