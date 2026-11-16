@@ -44,6 +44,10 @@ _Avoid_: Own-game puzzle, mistake puzzle
 A recurring pattern across many Mistake Positions, such as missing knight forks or losing won rook endgames.
 _Avoid_: Flaw, issue, problem area
 
+**Motif**:
+A named tactical pattern, such as a fork or a pin, in the line the Player missed or allowed at a Mistake Position.
+_Avoid_: Theme, tactic type
+
 ### Training
 
 **Card**:
