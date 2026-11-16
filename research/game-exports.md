@@ -12,7 +12,46 @@ Code cited at commit `2d8443f5` (worktree `research-game-exports`). Lichess spec
   (proxy). Every Chess.com API claim below is therefore **UNVERIFIABLE from a primary source in this run**. Where the
   table says "unverified" the cell is recall, not evidence. Re-check against the doc before the spec relies on it.
   The only hard Chess.com facts are what the app's own zod schema expects (`src/utils/chess.com/api.tsx:50-61`).
+  **Superseded:** the 2026-11-16 update below verifies these claims from a doc copy and real archives.
 - Blocked hosts: `www.chess.com`, `api.chess.com`, `lichess.org`. (An archive.org mirror was not tried: it would be a workaround.)
+
+## Update 2026-11-16: Chess.com and Lichess `since` verified
+
+A second run checked every "unverified" claim. Its sources:
+- the Chess.com Published-Data API doc via a GitHub gist copy (the official page and `api.chess.com` stayed blocked);
+- five real monthly archives saved as fixtures in public repos (about 150 games, 64 daily, 2009–2026; a sixth, hand-made file was discarded);
+- lila server source;
+- a test against the importer's exact shakmaty version.
+
+**Chess.com: recall in table A confirmed**
+- Daily games are in the monthly archive of the month they **end** (doc: "Live and Daily Chess games that a player has finished", `YYYY` is "the four digit year of the game-end"). A Sept 28 – Oct 2 daily game sits in the October archive.
+- Daily `time_control` is `1/<seconds>`: seen `1/86400` to `1/1209600`.
+- PGN carries `[%clk …]` on every modern game, daily included (2009 daily games have none). `[ECO]` and `[ECOUrl]` are always present. There is never `%eval`.
+- `accuracies` appear only "if they were previously calculated" (about 20% of samples).
+- `rules`: chess, chess960, bughouse, kingofthehill, threecheck, crazyhouse. Chess960 games also carry `[Variant "Chess960"]` and `[FEN …]`.
+- `ETag` and `Last-Modified` are sent; `If-None-Match` / `If-Modified-Since` return 304.
+- Serial access is "unlimited". Parallel requests may be blocked; expect 429.
+- No auth.
+- **New:** the doc asks for a recognisable User-Agent **with contact info**. The app sends only `Pawn Appetit` (`api.tsx:15-17`).
+- **New:** daily `%clk` values are seconds-scale (`0:00:04.5` on a one-day-per-move game), not remaining days, so they're unusable for time management. This strengthens implication 6.
+
+**#440 hypothesis 1 is not supported**
+- All 64 real daily games, and every other sample, pass `ChessComGameSchema`; `rated` and `initial_setup` were always present. "A daily game fails the schema and aborts the sync" has no support (small sample, but 2009–2026).
+- Every archive PGN ends with a newline, so the glued-games half of hypothesis 2 doesn't apply.
+- Still open: the unawaited-writes race (hypothesis 2). #440 has no confirmed cause.
+
+**Chess960: confirmed silent loss**
+- Chess.com 960 FENs use Shredder-style castling letters (e.g. `FBfb`). shakmaty 0.27.3 with `CastlingMode::Standard` rejects them ("invalid castling rights"), the importer sets `skip` (`pgn.rs:303-310`), and the game is discarded without a message. **Every Chess.com Chess960 game is dropped.** Not daily-specific.
+
+**Lichess `since` answered: creation time**
+- lila `modules/api/src/main/GameApiV2.scala:142` and `modules/game/src/main/Query.scala:126-129`: `since`/`until` filter on game **creation** time; unfinished games are excluded by default (`ongoing = false`).
+- With the app's cursor (start time of the newest stored game), a correspondence game still running at sync time is **never fetched** once any newer game is stored. This is a confirmed way games go missing, on Lichess, matching the "daily games missing" symptom of #440 (which is about Chess.com).
+
+**Revised implications**
+- 5 (cursor semantics): answered. A creation-time cursor loses correspondence games. Sync must re-query ongoing correspondence games (or keep a lower cursor at the oldest unfinished one).
+- 7 (variants): Chess960 loss is confirmed. Either filter at fetch or parse with `CastlingMode::Chess960` when `[Variant "Chess960"]` is present.
+- 8 (#440): drop hypothesis 1 as the lead. Reconciliation counts still stand.
+- 4: add a User-Agent with contact info for Chess.com; ETag/304 is now confirmed usable.
 
 ## A. What the exports return
 
@@ -77,7 +116,7 @@ returns no per-move time at all, and that cannot be recovered later without re-d
 | Lichess JSON-only data (`clocks` JSON, `analysis`, `accuracy`, `division`, `daysPerTurn`) | Not requested; PGN requested | `lichess/api.tsx:437-451` |
 | Header tags stored | White, Black, WhiteElo, BlackElo, TimeControl, ECO, Round, Date/UTCDate, UTCTime, EndDate, EndTime, Site, Event, Result, FEN | `db/pgn.rs:267-296` |
 | Header tags dropped | `Opening`, `Variant`, `Termination`, `TimeControl` is kept but there is no time-class column, `WhiteRatingDiff`, `LichessURL` etc. Opening name is therefore not stored, only ECO | `db/pgn.rs:267-316` (no match arms) |
-| Variant games | No variant handling anywhere in Rust. Movetext is parsed as standard chess; a game whose moves are illegal in standard rules (crazyhouse drops, etc.) hits `to_move` error and is **silently discarded** | `db/pgn.rs:381-390` (returns `None`); grep `Variant` in `src-tauri/src` finds none. Chess960 FEN setup is built with `CastlingMode::Standard`, a failure sets `skip` (`pgn.rs:303-310`). Exact fate of 960 games not tested |
+| Variant games | No variant handling anywhere in Rust. Movetext is parsed as standard chess; a game whose moves are illegal in standard rules (crazyhouse drops, etc.) hits `to_move` error and is **silently discarded** | `db/pgn.rs:381-390` (returns `None`); grep `Variant` in `src-tauri/src` finds none. Chess960 FEN setup is built with `CastlingMode::Standard`, a failure sets `skip` (`pgn.rs:303-310`). Chess.com 960 games are dropped (2026-11-16 update) |
 | Per-game clock/eval for time-management analysis | Chess.com: probably present inside comments; Lichess: absent | see above |
 
 Dependency: any "clock" feature has to parse `[%clk]` out of stored comments at read time (`pgn.rs:184-185` prints
@@ -90,7 +129,7 @@ imported". Body: daily games missing after connecting Chess.com; competing apps 
 only one?". No logs, version, or repro; no maintainer analysis. **No confirmed root cause is possible from the
 issue.** Hypotheses ranked by code evidence, none reproduced (Chess.com API unreachable):
 
-1. **Strict per-month schema; one non-conforming game aborts the whole sync (best-supported).**
+1. **Strict per-month schema; one non-conforming game aborts the whole sync.** *Not supported by real archives (2026-11-16 update): every sample passes the schema.*
    `ChessComGameSchema` requires `url, time_control, end_time, rated, initial_setup, fen, rules, white{rating,result,username}, black{...}`
    (`api.tsx:44-61`). `safeParse` runs on the whole month (`api.tsx:189`); on failure the code shows a notification and,
    unless the HTTP status is 404, executes `return` (`api.tsx:191-201`). Result: that month and **every later month**
