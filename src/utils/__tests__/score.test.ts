@@ -179,11 +179,11 @@ describe("win chance", () => {
     });
 });
 
-// Scores are written from the side to move; `grade` flips them to White's view for Black.
-type Side = ["cp" | "mate", number];
+// Scores are from the moving player's point of view; `grade` flips them to White's view for Black.
+type MoverScore = ["cp" | "mate", number];
 
-function grade(color: Color, prev: Side, next: Side, best: Side) {
-    const flip = ([type, value]: Side): ScoreValue => ({
+function grade(color: Color, prev: MoverScore, next: MoverScore, best: MoverScore) {
+    const flip = ([type, value]: MoverScore): ScoreValue => ({
         type,
         value: color === "white" ? value : -value,
     });
@@ -217,17 +217,33 @@ describe.each(["white", "black"] as const)("grading an Error for %s", (color) =>
     });
 
     describe("by lost centipawns from a winning position", () => {
-        // Win chance barely moves above +5, so only the centipawn rules decide here.
+        // Every row loses under 7.5 points of win chance, so only the centipawn rules decide.
+        // "!?" (Interesting) is not an Error.
         test.each<[number, Annotation]>([
-            [800, "!?"],
-            [799, "?!"],
-            [700, "?!"],
-            [699, "?"],
-            [500, "?"],
-            [499, "??"],
-        ])("+900 → %i cp grades %j", (next, expected) => {
-            expect(grade(color, ["cp", 900], ["cp", next], ["cp", 1000])).toBe(expected);
+            [900, "!?"],
+            [899, "?!"],
+            [800, "?!"],
+            [799, "?"],
+            [600, "?"],
+            [599, "??"],
+        ])("+10 → %i cp grades %j", (next, expected) => {
+            expect(grade(color, ["cp", 1000], ["cp", next], ["mate", 1])).toBe(expected);
         });
+    });
+
+    describe("by lost centipawns from a losing position", () => {
+        // The centipawn rules need a level or better score before the move, so only win chance decides.
+        test.each<[number, number, Annotation]>([
+            [-600, -702, ""],
+            [-600, -802, ""],
+            [-550, -1000, "?!"],
+        ])("%i → %i cp grades %j", (prev, next, expected) => {
+            expect(grade(color, ["cp", prev], ["cp", next], ["cp", -500])).toBe(expected);
+        });
+    });
+
+    test("throwing away a decisive advantage is a Blunder", () => {
+        expect(grade(color, ["cp", 600], ["cp", -400], ["cp", 600])).toBe("??");
     });
 
     test("needs an alternative more than 100 cp better than the move played", () => {
