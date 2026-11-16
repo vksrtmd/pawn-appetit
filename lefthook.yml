@@ -8,3 +8,5 @@ commit-msg:
   commands:
     commitlint:
       run: npx commitlint --edit {1}
+    test-type:
+      run: scripts/check-test-commit.sh {1}
