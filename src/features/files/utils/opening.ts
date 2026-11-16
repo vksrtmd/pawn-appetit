@@ -89,7 +89,7 @@ export function getCardForReview(
 
     const filtered = positions.filter((position) => new Date(position.card.due) <= now);
 
-    return filtered.length > 0 ? filtered[0] : null;
+    return filtered.find((position) => position.card.reps > 0) ?? filtered[0] ?? null;
 }
 
 export function updateCardPerformance(
