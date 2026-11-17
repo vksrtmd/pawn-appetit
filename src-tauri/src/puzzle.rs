@@ -584,6 +584,8 @@ fn parse_puzzles_from_pgn<R: Read>(mut reader: R) -> Result<Vec<NewPuzzle>, Erro
     // Convert bytes to string, replacing invalid UTF-8 sequences with replacement characters
     let content = String::from_utf8_lossy(&buffer);
 
+    let mut comments = crate::pgn::CommentTracker::default();
+
     for line in content.lines() {
         let line = line.trim();
 
@@ -596,7 +598,9 @@ fn parse_puzzles_from_pgn<R: Read>(mut reader: R) -> Result<Vec<NewPuzzle>, Erro
             continue;
         }
 
-        if line.starts_with('[') && line.ends_with(']') {
+        let is_header = comments.feed(line);
+
+        if is_header && line.ends_with(']') {
             // Parse PGN headers
             if let Some((key, value)) = parse_pgn_header(line) {
                 match key.as_str() {
@@ -625,7 +629,7 @@ fn parse_puzzles_from_pgn<R: Read>(mut reader: R) -> Result<Vec<NewPuzzle>, Erro
                     _ => {}
                 }
             }
-        } else if !line.starts_with('[') && in_puzzle && current_puzzle.moves.is_empty() {
+        } else if !is_header && in_puzzle && current_puzzle.moves.is_empty() {
             // If we have a non-header line and no moves yet, treat it as moves
             current_puzzle.moves = line.to_string();
         }
@@ -676,5 +680,18 @@ struct NewPuzzle {
 impl NewPuzzle {
     fn is_complete(&self) -> bool {
         !self.fen.is_empty() && !self.moves.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn bracket_line_inside_a_comment_is_not_a_puzzle_header() {
+        let pgn = "[FEN \"8/8/8/8/8/8/8/K6k w - - 0 1\"]\n[Moves \"a1a2\"]\n[Rating \"1500\"]\n{note\n[Rating \"9\"]\n}\n";
+        let puzzles = parse_puzzles_from_pgn(pgn.as_bytes()).unwrap();
+        assert_eq!(puzzles.len(), 1);
+        assert_eq!(puzzles[0].rating, 1500);
     }
 }

@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import { tanstackRouter } from "@tanstack/router-plugin/vite";
 import { vanillaExtractPlugin } from "@vanilla-extract/vite-plugin";
 import react from "@vitejs/plugin-react";
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 const isDebug = !!process.env.TAURI_ENV_DEBUG;
 
@@ -44,6 +44,8 @@ export default defineConfig({
     },
     test: {
         environment: "jsdom",
+        // Agent worktrees (.claude/worktrees) and the pnpm store sit inside the repo.
+        exclude: [...configDefaults.exclude, ".claude/**", ".pnpm-store/**"],
         env: { TZ: "UTC" },
         // Node 25+ ships a global localStorage that is undefined without
         // --localstorage-file and shadows jsdom's; turn it off in workers.

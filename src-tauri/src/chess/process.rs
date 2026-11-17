@@ -197,7 +197,47 @@ impl EngineProcess {
         self.options = options.clone();
         self.best_moves.clear();
         self.last_best_moves.clear();
+        self.last_progress = 0.0;
         Ok(())
+    }
+
+    /// Record one parsed `info` line. When it completes a depth for all `MultiPV` lines, the
+    /// cached state (used by the final `bestmove` payload) is always updated; the lines are
+    /// returned for emission only when `may_emit` allows (the event rate limit).
+    pub fn record_info(
+        &mut self,
+        best: BestMoves,
+        may_emit: impl FnOnce() -> bool,
+    ) -> Option<(f64, Vec<BestMoves>)> {
+        let multipv = best.multipv;
+        let cur_depth = best.depth;
+        let cur_nodes = best.nodes;
+        if multipv as usize != self.best_moves.len() + 1 {
+            return None;
+        }
+        self.best_moves.push(best);
+        if multipv != self.real_multipv {
+            return None;
+        }
+        let mut emit = None;
+        if self.best_moves.iter().all(|x| x.depth == cur_depth) && cur_depth >= self.last_depth {
+            let progress = match self.go_mode {
+                GoMode::Depth(depth) => (cur_depth as f64 / depth as f64) * 100.0,
+                GoMode::Time(time) => {
+                    (self.start.elapsed().as_millis() as f64 / time as f64) * 100.0
+                }
+                GoMode::Nodes(nodes) => (cur_nodes as f64 / nodes as f64) * 100.0,
+                GoMode::PlayersTime(_) | GoMode::Infinite => 99.99,
+            };
+            self.last_depth = cur_depth;
+            self.last_best_moves = self.best_moves.clone();
+            self.last_progress = progress as f32;
+            if may_emit() {
+                emit = Some((progress, self.best_moves.clone()));
+            }
+        }
+        self.best_moves.clear();
+        emit
     }
 
     /// Set the engine's position using FEN and move list.
@@ -313,6 +353,31 @@ fn invert_score(score: vampirc_uci::uci::Score) -> vampirc_uci::uci::Score {
         value: new_value,
         wdl: new_wdl,
         ..score
+    }
+}
+
+/// Turn an engine `info` line into a best line; partial or unparseable lines yield `None`.
+///
+/// Lines whose score is a lower or upper bound are partial results and are dropped, so the
+/// score and PV do not flicker. Parse failures are logged, except `NoMovesFound` (info lines
+/// without a PV, which engines send all the time).
+pub fn best_moves_from_info(
+    attrs: Vec<UciInfoAttribute>,
+    fen: &Fen,
+    moves: &Vec<String>,
+) -> Option<BestMoves> {
+    match parse_uci_attrs(attrs, fen, moves) {
+        Ok(best)
+            if best.score.lower_bound == Some(true) || best.score.upper_bound == Some(true) =>
+        {
+            None
+        }
+        Ok(best) => Some(best),
+        Err(Error::NoMovesFound) => None,
+        Err(e) => {
+            log::warn!("Failed to parse info line, error: {:?}", e);
+            None
+        }
     }
 }
 
@@ -444,5 +509,114 @@ mod go_command_tests {
             go_command(&mode),
             "go wtime 1 winc 3 btime 2 binc 4 movetime 1000\n"
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use vampirc_uci::{parse_one, UciMessage};
+
+    const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    fn best_moves_from(line: &str) -> Option<BestMoves> {
+        let UciMessage::Info(attrs) = parse_one(line) else {
+            return None;
+        };
+        best_moves_from_info(attrs, &START.parse().unwrap(), &vec![])
+    }
+
+    fn test_process() -> EngineProcess {
+        let mut child = tokio::process::Command::new("cat")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let stdin = child.stdin.take().unwrap();
+        EngineProcess {
+            lifecycle: EngineLifecycle::new(),
+            child,
+            stdin,
+            last_depth: 0,
+            best_moves: Vec::new(),
+            last_best_moves: Vec::new(),
+            last_progress: 0.0,
+            options: EngineOptions::default(),
+            go_mode: GoMode::Depth(1),
+            running: true,
+            real_multipv: 1,
+            logs: Vec::new(),
+            start: Instant::now(),
+        }
+    }
+
+    #[tokio::test]
+    async fn throttled_final_depth_is_still_kept_for_bestmove() {
+        let mut proc = test_process();
+        let best = best_moves_from("info depth 1 score cp 30 multipv 1 pv e2e4").unwrap();
+
+        let emitted = proc.record_info(best, || false);
+
+        assert!(emitted.is_none(), "throttled: nothing emitted");
+        assert_eq!(proc.last_best_moves.len(), 1);
+        assert_eq!(proc.last_best_moves[0].uci_moves, vec!["e2e4"]);
+        assert_eq!(proc.last_progress, 100.0);
+    }
+
+    #[tokio::test]
+    async fn unthrottled_depth_is_emitted_with_progress() {
+        let mut proc = test_process();
+        let best = best_moves_from("info depth 1 score cp 30 multipv 1 pv e2e4").unwrap();
+
+        let (progress, lines) = proc.record_info(best, || true).unwrap();
+
+        assert_eq!(progress, 100.0);
+        assert_eq!(lines.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn changing_options_resets_progress() {
+        let mut proc = test_process();
+        proc.last_progress = 100.0;
+
+        proc.set_options(EngineOptions {
+            fen: START.to_string(),
+            moves: vec![],
+            extra_options: vec![],
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(proc.last_progress, 0.0);
+    }
+
+    #[test]
+    fn non_standard_info_string_stays_an_info_message() {
+        let msg = parse_one("info string NNUE evaluation using nn-1111cefa1111.nnue enabled");
+        assert!(matches!(msg, UciMessage::Info(_)), "{msg:?}");
+    }
+
+    #[test]
+    fn info_line_with_unknown_token_keeps_known_attributes() {
+        let best = best_moves_from("info depth 2 policy 1593 score cp 20 multipv 1 pv e2e4 c7c6")
+            .expect("line with an unknown token is still parsed");
+        assert_eq!(best.depth, 2);
+        assert_eq!(best.uci_moves, vec!["e2e4", "c7c6"]);
+    }
+
+    #[test]
+    fn lowerbound_line_is_not_a_best_line() {
+        assert!(best_moves_from("info depth 5 score cp 30 lowerbound multipv 1 pv e2e4").is_none());
+    }
+
+    #[test]
+    fn upperbound_line_is_not_a_best_line() {
+        assert!(best_moves_from("info depth 5 score cp 30 upperbound multipv 1 pv e2e4").is_none());
+    }
+
+    #[test]
+    fn exact_line_is_a_best_line() {
+        assert!(best_moves_from("info depth 5 score cp 30 multipv 1 pv e2e4").is_some());
     }
 }

@@ -161,6 +161,8 @@ export type GameHeaders = {
     black_time_control?: string | null;
     eco?: string | null;
     variant?: string | null;
+    /** Tags the app does not model, kept in order and written back on save. */
+    other?: Record<string, string>;
     // Repertoire headers
     start?: number[];
     orientation?: "white" | "black";

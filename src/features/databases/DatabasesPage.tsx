@@ -35,7 +35,7 @@ import { listen } from "@tauri-apps/api/event";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { open as openDialog, save } from "@tauri-apps/plugin-dialog";
 import { readDir } from "@tauri-apps/plugin-fs";
-import { useAtom } from "jotai";
+import { useAtom, useSetAtom } from "jotai";
 import { DataTable } from "mantine-datatable";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -46,7 +46,7 @@ import * as classes from "@/components/GenericCard/styles.css";
 import GenericHeader, { type SortState } from "@/components/GenericHeader";
 import { processEntriesRecursively } from "@/features/files/utils/file";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import { referenceDbAtom } from "@/state/atoms";
+import { forgetReferenceDbAtom, storedReferenceDbAtom } from "@/state/atoms";
 import { useActiveDatabaseViewStore } from "@/state/store/database";
 import { getDatabases, type SuccessDatabaseInfo } from "@/utils/db";
 import { getPuzzleDatabases } from "@/utils/puzzles";
@@ -151,7 +151,7 @@ export default function DatabasesPage() {
   const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
 
   const setActiveDatabase = useActiveDatabaseViewStore((store) => store.setDatabase);
-  const [referenceDatabase, setReferenceDatabase] = useAtom(referenceDbAtom);
+  const [referenceDatabase, setReferenceDatabase] = useAtom(storedReferenceDbAtom);
 
   const { layout } = useResponsiveLayout();
 
@@ -932,6 +932,7 @@ function DatabaseActions({
   refreshPuzzleDatabases,
 }: DatabaseActionsProps) {
   const { t } = useTranslation();
+  const forgetReferenceDb = useSetAtom(forgetReferenceDbAtom);
 
   const handleAddGames = useCallback(async () => {
     const file = await openDialog({
@@ -975,7 +976,9 @@ function DatabaseActions({
       labels: { confirm: t("common.remove"), cancel: t("common.cancel") },
       confirmProps: { color: "red" },
       onConfirm: async () => {
-        await commands.deleteDatabase(database.file);
+        const result = await commands.deleteDatabase(database.file);
+        if (result.status !== "ok") return;
+        forgetReferenceDb(database.file);
         mutate();
         onSelect(null);
         if (isPuzzleDatabase(database)) {
@@ -983,7 +986,7 @@ function DatabaseActions({
         }
       },
     });
-  }, [database, mutate, onSelect, refreshPuzzleDatabases, t]);
+  }, [database, forgetReferenceDb, mutate, onSelect, refreshPuzzleDatabases, t]);
 
   if (isPuzzleDatabase(database)) {
     return (
