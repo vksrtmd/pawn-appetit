@@ -224,7 +224,23 @@ export function getVariationLine(
     return moves;
 }
 
-function headersToPGN(game: GameHeaders): string {
+/** Highest rating the database rating columns can hold. */
+const MAX_RATING = 32767;
+
+function formatRatingTag(rating: number): string {
+    return Number.isInteger(rating) && rating > 0 && rating <= MAX_RATING ? `${rating}` : "-";
+}
+
+/** Maps a rating tag to the app's unrated sentinel `0` when it is not a usable rating. */
+function parseRatingTag(value: string | undefined): number | undefined {
+    if (value === undefined) return undefined;
+    const match = /^\+?(\d+)$/.exec(value.trim());
+    if (!match) return 0;
+    const rating = Number.parseInt(match[1], 10);
+    return rating > 0 && rating <= MAX_RATING ? rating : 0;
+}
+
+export function headersToPGN(game: GameHeaders): string {
     let headers = `[Event "${game.event || "?"}"]
 [Site "${game.site || "?"}"]
 [Date "${game.date || "????.??.??"}"]
@@ -233,11 +249,14 @@ function headersToPGN(game: GameHeaders): string {
 [Black "${game.black || "?"}"]
 [Result "${game.result}"]
 `;
-    if (game.white_elo) {
-        headers += `[WhiteElo "${game.white_elo}"]\n`;
+    if (game.time) {
+        headers += `[UTCTime "${game.time}"]\n`;
     }
-    if (game.black_elo) {
-        headers += `[BlackElo "${game.black_elo}"]\n`;
+    if (game.white_elo != null) {
+        headers += `[WhiteElo "${formatRatingTag(game.white_elo)}"]\n`;
+    }
+    if (game.black_elo != null) {
+        headers += `[BlackElo "${formatRatingTag(game.black_elo)}"]\n`;
     }
     if (game.start && game.start.length > 0) {
         headers += `[Start "${JSON.stringify(game.start)}"]\n`;
@@ -259,6 +278,10 @@ function headersToPGN(game: GameHeaders): string {
     }
     if (game.variant) {
         headers += `[Variant "${game.variant}"]\n`;
+    }
+    for (const [key, value] of Object.entries(game.other ?? {})) {
+        if (key === "ECO" && game.eco) continue;
+        headers += `[${key} "${value}"]\n`;
     }
     return headers;
 }
@@ -780,6 +803,12 @@ export async function parsePGN(
     return tree;
 }
 
+const isValidOutcome = (value: string | undefined): value is Outcome =>
+    value !== undefined && ["*", "1-0", "0-1", "1/2-1/2"].includes(value);
+
+const isValidOrientation = (value: string | undefined): value is "white" | "black" =>
+    value === "white" || value === "black";
+
 export function getPgnHeaders(tokens: Token[]): GameHeaders {
     const headersN = new Map<string, string>();
 
@@ -799,15 +828,19 @@ export function getPgnHeaders(tokens: Token[]): GameHeaders {
         WhiteElo,
         // biome-ignore lint/suspicious/noShadowRestrictedNames: this is a name from the PGN standard
         Date,
+        UTCTime,
         Site,
         Event,
         Result,
         FEN,
+        // SetUp is rewritten from the tree's FEN on save
+        SetUp: _setUp,
         Round,
         Start,
         Orientation,
         TimeControl,
         Variant,
+        ...other
     } = Object.fromEntries(headersN);
 
     const fenToUse = FEN ?? INITIAL_FEN;
@@ -818,19 +851,21 @@ export function getPgnHeaders(tokens: Token[]): GameHeaders {
     const headers: GameHeaders = {
         id: 0,
         fen: fenToUse,
-        result: (Result as Outcome) ?? "*",
+        result: isValidOutcome(Result) ? Result : "*",
         black: Black ?? "?",
         white: White ?? "?",
         round: Round ?? "?",
-        black_elo: BlackElo ? Number.parseInt(BlackElo, 10) : 0,
-        white_elo: WhiteElo ? Number.parseInt(WhiteElo, 10) : 0,
+        black_elo: parseRatingTag(BlackElo),
+        white_elo: parseRatingTag(WhiteElo),
         date: Date ?? "",
+        time: UTCTime,
         site: Site ?? "",
         event: Event ?? "",
         start: JSON.parse(Start ?? "[]"),
-        orientation: (Orientation as "white" | "black") ?? orientationFromFen,
+        orientation: isValidOrientation(Orientation) ? Orientation : orientationFromFen,
         time_control: TimeControl,
         variant: Variant,
+        other,
     };
     return headers;
 }
