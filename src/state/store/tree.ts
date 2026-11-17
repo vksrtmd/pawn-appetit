@@ -27,6 +27,9 @@ export interface TreeStoreState extends TreeState {
     currentNode: () => TreeNode;
 
     goToNext: () => void;
+    /** Line of the Repertoire Review card being drilled; goToNext follows it and stops at its end. */
+    practicePath: number[] | null;
+    setPracticePath: (path: number[] | null) => void;
     goToPrevious: () => void;
     goToStart: () => void;
     goToEnd: () => void;
@@ -119,20 +122,25 @@ export const createTreeStore = (id?: string, initialTree?: TreeState) => {
                 }),
             ),
 
+        practicePath: null,
+        setPracticePath: (path) => set({ practicePath: path }),
+
         goToNext: () =>
             set((state) => {
+                const { practicePath } = state;
+                if (practicePath && state.position.length >= practicePath.length) return state;
+                const childIndex = practicePath ? practicePath[state.position.length] : 0;
+
                 const node = getNodeAtPath(state.root, state.position);
                 const [pos] = positionFromFen(node.fen);
-                if (!pos || !node.children[0]?.move) return state;
-                const san = makeSan(pos, node.children[0].move);
+                const move = node.children[childIndex]?.move;
+                if (!pos || !move) return state;
+                const san = makeSan(pos, move);
                 playSound(san.includes("x"), san.includes("+"));
-                if (node && node.children.length > 0) {
-                    return {
-                        ...state,
-                        position: [...state.position, 0],
-                    };
-                }
-                return state;
+                return {
+                    ...state,
+                    position: [...state.position, childIndex],
+                };
             }),
         goToPrevious: () => set((state) => ({ ...state, position: state.position.slice(0, -1) })),
 

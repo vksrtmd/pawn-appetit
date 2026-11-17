@@ -354,6 +354,10 @@ function BoardAnalysis() {
   const isPuzzle =
     currentTab?.source?.type === "file" && currentTab.source.metadata.type === "puzzle";
   const practicing = currentTabSelected === "practice" && practiceTabSelected === "train";
+  const setPracticePath = useStore(store, (s) => s.setPracticePath);
+  useEffect(() => {
+    if (!practicing) setPracticePath(null);
+  }, [practicing, setPracticePath]);
 
   const { layout } = useResponsiveLayout();
   const isMobileLayout = layout.chessBoard.layoutType === "mobile";
