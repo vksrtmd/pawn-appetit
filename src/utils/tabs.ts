@@ -174,7 +174,8 @@ export async function saveToFile({
             ],
         });
         if (userChoice === null) return;
-        filePath = userChoice;
+        // On Linux the dialog filter doesn't append the extension.
+        filePath = /\.pgn$/i.test(userChoice) ? userChoice : `${userChoice}.pgn`;
         const fileName = await getFileNameWithoutExtension(filePath);
         if (tab?.source?.type === "file" && isTempImportFile(tab?.source?.path)) {
             const count = unwrap(await commands.countPgnGames(tab?.source?.path ?? ""));
@@ -203,16 +204,18 @@ export async function saveToFile({
             };
         });
     }
-    await commands.writeGame(
-        filePath,
-        tab?.gameNumber || 0,
-        `${getPGN(store.getState().root, {
-            headers: store.getState().headers,
-            comments: true,
-            extraMarkups: true,
-            glyphs: true,
-            variations: true,
-        })}\n\n`,
+    unwrap(
+        await commands.writeGame(
+            filePath,
+            tab?.gameNumber || 0,
+            `${getPGN(store.getState().root, {
+                headers: store.getState().headers,
+                comments: true,
+                extraMarkups: true,
+                glyphs: true,
+                variations: true,
+            })}\n\n`,
+        ),
     );
     invalidateFileIndex();
     store.getState().save();
@@ -230,7 +233,7 @@ export async function saveTab(tab: Tab, store: StoreApi<TreeStoreState>) {
             variations: true,
         })}\n\n`;
 
-        await commands.writeGame(tab.source.path, tab?.gameNumber || 0, pgn);
+        unwrap(await commands.writeGame(tab.source.path, tab?.gameNumber || 0, pgn));
         invalidateFileIndex();
     } else if (tab.source?.type === "db") {
         const headers = store.getState().headers;
