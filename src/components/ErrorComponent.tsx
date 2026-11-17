@@ -2,9 +2,20 @@ import { Anchor, Button, Code, CopyButton, Group, Stack, Text, Title } from "@ma
 import { useNavigate } from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 
+function formatDetail(detail: unknown): string {
+  if (detail === null || detail === undefined) return "";
+  if (typeof detail === "string") return detail;
+  try {
+    return JSON.stringify(detail);
+  } catch {
+    return String(detail);
+  }
+}
+
 export default function ErrorComponent({ error }: { error: unknown }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const cause = error instanceof Error ? formatDetail(error.cause) : "";
 
   return (
     <Stack p="md">
@@ -15,11 +26,11 @@ export default function ErrorComponent({ error }: { error: unknown }) {
             <b>{error.name}:</b> {error.message}
           </Text>
           <Code>{error.stack}</Code>
-          {error.cause}
+          {cause && <Code>{cause}</Code>}
         </>
       ) : (
         <Text>
-          <b>{t("error.unexpectedError")}</b> {JSON.stringify(error)}
+          <b>{t("error.unexpectedError")}</b> {formatDetail(error)}
         </Text>
       )}
       <Group>

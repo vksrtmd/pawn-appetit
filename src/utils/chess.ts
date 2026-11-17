@@ -220,7 +220,9 @@ export function getVariationLine(
         return [];
     }
     for (const pos of position) {
-        node = node.children[pos];
+        const child = node.children[pos];
+        if (!child) break;
+        node = child;
         if (node.move) {
             moves.push(uciNormalize(chess, node.move, chess960));
             chess.play(node.move);
