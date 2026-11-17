@@ -654,7 +654,8 @@ function innerParsePGN(
                 root.clock = comment.clock;
             }
 
-            root.comment = comment.text;
+            // Lichess/chess.com [%timestamp N] is not shown, like [%clk] and [%eval]
+            root.comment = comment.text.replace(/\s*\[%timestamp\s+\d+\]\s*/g, " ").trim();
             i++;
         } else if (token.type === "ParenOpen") {
             const variation = [];
