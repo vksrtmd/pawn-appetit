@@ -83,6 +83,13 @@ import {
   type TreeState,
   treeIteratorMainLine,
 } from "@/utils/treeReducer";
+import {
+  buildEngineGameHeaders,
+  copyTimeControl,
+  engineExtraOptions,
+  engineGoMode,
+  type PlayerSettings,
+} from "../play/engineGame";
 import { buildPlayGamePgn } from "../play/playGamePgn";
 import GameNotationWrapper from "./GameNotationWrapper";
 import ResponsiveBoard from "./ResponsiveBoard";
@@ -162,18 +169,7 @@ function EnginesSelect({ engine, setEngine, engines = [], enginesState }: Engine
   );
 }
 
-export type OpponentSettings =
-  | {
-      type: "human";
-      timeControl?: TimeControlField;
-      name?: string;
-    }
-  | {
-      type: "engine";
-      timeControl?: TimeControlField;
-      engine: LocalEngine | null;
-      go: GoMode;
-    };
+export type OpponentSettings = PlayerSettings;
 
 interface OpponentFormProps {
   sameTimeControl: boolean;
@@ -325,6 +321,7 @@ function OpponentForm({
               ...prev,
               ...(engine?.go ? { go: engine.go } : {}),
               engine,
+              engineSettings: engine?.settings ?? undefined,
             }))
           }
           engines={engines}
@@ -344,6 +341,11 @@ function OpponentForm({
             <InputWrapper label={t("game.time")}>
               <TimeInput
                 defaultType="m"
+                type={opponent.timeUnit}
+                onTypeChange={(timeUnit) => {
+                  setOpponent((prev) => ({ ...prev, timeUnit }));
+                  if (sameTimeControl) setOtherOpponent((prev) => ({ ...prev, timeUnit }));
+                }}
                 value={opponent.timeControl.seconds}
                 setValue={handleTimeChange}
               />
@@ -351,6 +353,11 @@ function OpponentForm({
             <InputWrapper label={t("game.increment")}>
               <TimeInput
                 defaultType="s"
+                type={opponent.incrementUnit}
+                onTypeChange={(incrementUnit) => {
+                  setOpponent((prev) => ({ ...prev, incrementUnit }));
+                  if (sameTimeControl) setOtherOpponent((prev) => ({ ...prev, incrementUnit }));
+                }}
                 value={opponent.timeControl.increment ?? 0}
                 setValue={handleIncrementChange}
               />
@@ -367,7 +374,7 @@ function OpponentForm({
             gameMode
             settings={{
               go: opponent.go,
-              settings: opponent.engine.settings || [],
+              settings: opponent.engineSettings || opponent.engine.settings || [],
               enabled: true,
               synced: false,
             }}
@@ -376,11 +383,11 @@ function OpponentForm({
                 if (prev.type === "human") return prev;
                 const newSettings = fn({
                   go: prev.go,
-                  settings: prev.engine?.settings || [],
+                  settings: prev.engineSettings || prev.engine?.settings || [],
                   enabled: true,
                   synced: false,
                 });
-                return { ...prev, ...newSettings };
+                return { ...prev, go: newSettings.go, engineSettings: newSettings.settings };
               })
             }
             minimal={true}
@@ -760,23 +767,11 @@ function BoardGame() {
             currentTurn,
             engine.path,
             tabKey,
-            player.timeControl
-              ? {
-                  t: "PlayersTime",
-                  c: {
-                    white: whiteTime ?? 0,
-                    black: blackTime ?? 0,
-                    winc: player.timeControl.increment ?? 0,
-                    binc: player.timeControl.increment ?? 0,
-                  },
-                }
-              : player.go,
+            engineGoMode(players, currentTurn, whiteTime, blackTime),
             {
               fen: root.fen,
               moves: moves,
-              extraOptions: (engine.settings || [])
-                .filter((s) => s.name !== "MultiPV")
-                .map((s) => ({ ...s, value: s.value?.toString() ?? "" })),
+              extraOptions: engineExtraOptions(player),
             },
           )
           .catch(() => {
@@ -980,6 +975,7 @@ function BoardGame() {
         (newPlayers.black.type === "human"
           ? newPlayers.black.name
           : newPlayers.black.engine?.name) ?? "?",
+      ...buildEngineGameHeaders(newPlayers.white, newPlayers.black, new Date()),
       time_control: undefined,
       orientation:
         newPlayers.white.type === "human" && newPlayers.black.type === "engine"
@@ -1275,13 +1271,10 @@ function BoardGame() {
       setSameTimeControl(isChecked);
 
       if (isChecked) {
-        setPlayer2Settings((prev) => ({
-          ...prev,
-          timeControl: player1Settings.timeControl,
-        }));
+        setPlayer2Settings((prev) => copyTimeControl(player1Settings, prev));
       }
     },
-    [player1Settings.timeControl],
+    [player1Settings],
   );
 
   // Check if we're coming from a variants file

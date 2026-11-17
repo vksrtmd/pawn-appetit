@@ -3,17 +3,27 @@ import { useState } from "react";
 import { match } from "ts-pattern";
 import type { GoMode } from "@/bindings";
 
-type TimeType = "ms" | "s" | "m" | "h";
+export type TimeType = "ms" | "s" | "m" | "h";
 function TimeInput({
   value,
   setValue,
   defaultType,
+  type,
+  onTypeChange,
 }: {
   value: number;
   setValue: (v: GoMode) => void;
   defaultType?: TimeType;
+  /** Controlled unit; without it the input keeps its own. */
+  type?: TimeType;
+  onTypeChange?: (type: TimeType) => void;
 }) {
-  const [timeType, setTimeType] = useState<TimeType>(defaultType ?? "ms");
+  const [ownType, setOwnType] = useState<TimeType>(defaultType ?? "ms");
+  const timeType = type ?? ownType;
+  const setTimeType = (t: TimeType) => {
+    setOwnType(t);
+    onTypeChange?.(t);
+  };
   const displayedValue = match(timeType)
     .with("ms", () => value)
     .with("s", () => value / 1000)
