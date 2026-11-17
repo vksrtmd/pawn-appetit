@@ -15,7 +15,6 @@ import { writeFile } from "@tauri-apps/plugin-fs";
 import { makeSquare, type NormalMove, parseSquare, parseUci, type SquareName } from "chessops";
 import { chessgroundDests, chessgroundMove } from "chessops/compat";
 import { makeSan } from "chessops/san";
-import domtoimage from "dom-to-image";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useContextMenu } from "mantine-contextmenu";
 import { memo, useCallback, useContext, useEffect, useMemo, useState } from "react";
@@ -53,9 +52,10 @@ import {
 import { keyMapAtom } from "@/state/keybindings";
 import { blindfold, chessboard } from "@/styles/Chessboard.css";
 import { annotationColors, isBasicAnnotation } from "@/utils/annotation";
-import { getMaterialDiff, getVariationLine } from "@/utils/chess";
+import { getMaterialDiff, getMoveDestination, getVariationLine } from "@/utils/chess";
 import { chessopsError, forceEnPassant, positionFromFen } from "@/utils/chessops";
 import { getDocumentDir } from "@/utils/documentDir";
+import { renderBoardSnapshot } from "../utils/boardSnapshot";
 import AnnotationHint from "./AnnotationHint";
 import EvalBar from "./EvalBar";
 import MoveInput from "./MoveInput";
@@ -67,13 +67,7 @@ const SMALL_BRUSH = 4;
 
 export async function saveBoardSnapshot(boardRef: React.MutableRefObject<HTMLDivElement | null>) {
   const ref = boardRef.current;
-  if (ref == null) return;
-
-  // We must get the first children three levels below, as it has the right dimensions.
-  const refChildNode = ref.children[0]?.children[0]?.children[0] as HTMLElement | undefined;
-  if (refChildNode == null) return;
-
-  const blob = await domtoimage.toBlob(refChildNode);
+  const blob = ref && (await renderBoardSnapshot(ref));
   if (blob == null) return;
 
   const documentsDirPath = await getDocumentDir();
@@ -487,10 +481,7 @@ function Board({
     [keyMap.BLINDFOLD.keys, () => setBlindfold((v) => !v)],
   ]);
 
-  const square = match(currentNode)
-    .with({ san: "O-O" }, ({ halfMoves }) => parseSquare(halfMoves % 2 === 1 ? "g1" : "g8"))
-    .with({ san: "O-O-O" }, ({ halfMoves }) => parseSquare(halfMoves % 2 === 1 ? "c1" : "c8"))
-    .otherwise((node) => node.move?.to);
+  const square = getMoveDestination(currentNode);
 
   const lastMove =
     currentNode.move && square !== undefined
