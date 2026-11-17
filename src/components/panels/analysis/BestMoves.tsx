@@ -37,7 +37,7 @@ import {
   enginesAtom,
   tabEngineSettingsFamily,
 } from "@/state/atoms";
-import { chessopsError, positionFromFen, swapMove } from "@/utils/chessops";
+import { activeThreat, chessopsError, positionFromFen, swapMove } from "@/utils/chessops";
 import type { Engine } from "@/utils/engines";
 import AnalysisRow from "./AnalysisRow";
 import * as classes from "./BestMoves.css";
@@ -112,7 +112,7 @@ function BestMovesComponent({
   );
 
   const [settingsOn, toggleSettingsOn] = useToggle();
-  const [threat, setThreat] = useAtom(currentThreatAtom);
+  const [threatRequested, setThreat] = useAtom(currentThreatAtom);
   const theme = useMantineTheme();
 
   const [pos, error] = positionFromFen(fen);
@@ -129,6 +129,8 @@ function BestMovesComponent({
 
   const isGameOver = pos?.isEnd() ?? false;
   const finalFen = useMemo(() => (pos ? makeFen(pos.toSetup()) : null), [pos]);
+  const isCheck = pos?.isCheck() ?? false;
+  const threat = activeThreat(threatRequested, finalFen || INITIAL_FEN);
 
   const { searchingFen, searchingMoves } = useMemo(
     () =>
@@ -182,8 +184,8 @@ function BestMovesComponent({
           <Tooltip label={t("analysis.checkOpponentThreat")}>
             <ActionIcon
               size="lg"
-              onClick={() => setThreat(!threat)}
-              disabled={!settings.enabled}
+              onClick={() => setThreat(!threatRequested)}
+              disabled={!settings.enabled || isCheck}
               variant="transparent"
               mt="auto"
               mb="auto"

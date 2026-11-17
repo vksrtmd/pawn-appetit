@@ -19,9 +19,7 @@ use crate::{
     AppState,
 };
 use dashmap::DashMap;
-use diesel::{
-    connection::SimpleConnection, dsl::sql, insert_into, prelude::*, sql_query, sql_types::Text,
-};
+use diesel::{connection::SimpleConnection, dsl::sql, prelude::*, sql_query, sql_types::Text};
 use pgn::Importer;
 use pgn_reader::BufferedReader;
 use rayon::prelude::*;
@@ -131,27 +129,7 @@ pub async fn convert_pgn(
         db.batch_execute(INDEXES_SQL)?;
     }
 
-    // get game, player, event and site counts and to the info table
-    let game_count: i64 = games::table.count().get_result(db)?;
-    let player_count: i64 = players::table.count().get_result(db)?;
-    let event_count: i64 = events::table.count().get_result(db)?;
-    let site_count: i64 = sites::table.count().get_result(db)?;
-
-    let counts = [
-        ("GameCount", game_count),
-        ("PlayerCount", player_count),
-        ("EventCount", event_count),
-        ("SiteCount", site_count),
-    ];
-
-    for c in counts.iter() {
-        insert_into(info::table)
-            .values((info::name.eq(c.0), info::value.eq(c.1.to_string())))
-            .on_conflict(info::name)
-            .do_update()
-            .set(info::value.eq(c.1.to_string()))
-            .execute(db)?;
-    }
+    core::refresh_info_counts(db)?;
 
     Ok(())
 }
@@ -197,9 +175,7 @@ pub async fn get_db_info(
 
     let db = &mut get_db_or_create(&state, path.to_str().unwrap(), ConnectionOptions::default())?;
 
-    let player_count = players::table.count().get_result::<i64>(db)? as i32;
-    let game_count = games::table.count().get_result::<i64>(db)? as i32;
-    let event_count = events::table.count().get_result::<i64>(db)? as i32;
+    let counts = core::db_counts(db)?;
 
     let title = match info::table
         .filter(info::name.eq("Title"))
@@ -226,9 +202,9 @@ pub async fn get_db_info(
     Ok(DatabaseInfo {
         title,
         description,
-        player_count,
-        game_count,
-        event_count,
+        player_count: counts.players,
+        game_count: counts.games,
+        event_count: counts.events,
         storage_size,
         filename: filename.to_string(),
         indexed: is_indexed,
@@ -1074,16 +1050,7 @@ pub async fn merge_players(
 
     diesel::delete(players::table.filter(players::id.eq(player1))).execute(db)?;
 
-    let player_count: i64 = players::table.count().get_result(db)?;
-    diesel::insert_into(info::table)
-        .values((
-            info::name.eq("PlayerCount"),
-            info::value.eq(player_count.to_string()),
-        ))
-        .on_conflict(info::name)
-        .do_update()
-        .set(info::value.eq(player_count.to_string()))
-        .execute(db)?;
+    core::refresh_info_counts(db)?;
 
     Ok(())
 }

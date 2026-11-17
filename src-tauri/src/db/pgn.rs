@@ -233,6 +233,14 @@ pub struct TempGame {
     pub tree: GameTree,
 }
 
+/// Maps a rating tag to the "unrated" sentinel `0` unless it is a positive number.
+fn parse_rating(value: &[u8]) -> i32 {
+    std::str::from_utf8(value)
+        .ok()
+        .and_then(|v| v.trim().parse::<i16>().ok())
+        .map_or(0, |rating| i32::from(rating.max(0)))
+}
+
 pub struct Importer {
     game: TempGame,
     variants: Vec<GameTree>,
@@ -270,9 +278,9 @@ impl Visitor for Importer {
         } else if key == b"Black" {
             self.game.black_name = Some(value.decode_utf8_lossy().into_owned());
         } else if key == b"WhiteElo" {
-            self.game.white_elo = btoi::btoi(value.as_bytes()).ok();
+            self.game.white_elo = Some(parse_rating(value.as_bytes()));
         } else if key == b"BlackElo" {
-            self.game.black_elo = btoi::btoi(value.as_bytes()).ok();
+            self.game.black_elo = Some(parse_rating(value.as_bytes()));
         } else if key == b"TimeControl" {
             self.game.time_control = Some(value.decode_utf8_lossy().into_owned());
         } else if key == b"ECO" {
@@ -430,6 +438,30 @@ mod test {
     }
 
     #[test]
+    fn test_account_download_ends_without_empty_games() {
+        // Shaped like a Lichess/Chess.com download: games separated by blank
+        // lines, ending in blank lines and, for an interrupted download, a
+        // header-only game.
+        let complete = "[Event \"Rated Blitz game\"]\n[Site \"https://lichess.org/abcd1234\"]\n[White \"alice\"]\n[Black \"bob\"]\n[Result \"1-0\"]\n\n1. e4 e5 1-0\n\n\n";
+        let cases = [
+            ("trailing blank lines", format!("{complete}\n\n")),
+            ("two months joined", format!("{complete}\n{complete}")),
+        ];
+        for (name, pgn) in cases {
+            let mut importer = Importer::new(None);
+            let games: Vec<_> = BufferedReader::new_cursor(pgn.as_bytes())
+                .into_iter(&mut importer)
+                .flatten()
+                .flatten()
+                .collect();
+            assert!(
+                games.iter().all(|g| g.tree.count_main_line_moves() > 0),
+                "{name}: found an empty game"
+            );
+        }
+    }
+
+    #[test]
     fn test_count_main_line_moves() {
         // Test 1: Empty game tree
         let empty_tree = GameTree::new();
@@ -577,5 +609,39 @@ mod test {
 
         assert_eq!(game.tree, GameTree::from_bytes(&bytes, None).unwrap());
         assert_eq!(trim(&game.tree.to_string()), trim(pgn));
+    }
+
+    fn ratings(value: &str) -> (Option<i32>, Option<i32>) {
+        let pgn = format!("[WhiteElo \"{value}\"]\n[BlackElo \"{value}\"]\n\n1. e4 *");
+        let mut reader = BufferedReader::new_cursor(pgn.as_bytes());
+        let mut importer = Importer::new(None);
+        let game = reader.read_game(&mut importer).unwrap().flatten().unwrap();
+        (game.white_elo, game.black_elo)
+    }
+
+    #[test]
+    fn unusable_rating_tags_import_as_unrated() {
+        for value in ["?", "??", "-", "0", "", "N/A", "-5", "999999"] {
+            assert_eq!(ratings(value), (Some(0), Some(0)), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn numeric_rating_tags_import_as_numbers() {
+        for (value, expected) in [("2100", 2100), ("02300", 2300), (" 2100 ", 2100)] {
+            assert_eq!(
+                ratings(value),
+                (Some(expected), Some(expected)),
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn absent_rating_tags_stay_unknown() {
+        let mut reader = BufferedReader::new_cursor("1. e4 *".as_bytes());
+        let mut importer = Importer::new(None);
+        let game = reader.read_game(&mut importer).unwrap().flatten().unwrap();
+        assert_eq!((game.white_elo, game.black_elo), (None, None));
     }
 }

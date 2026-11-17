@@ -8,6 +8,35 @@ use crate::{error::Error, AppState};
 
 const GAME_OFFSET_FREQ: usize = 100;
 
+/// Tracks whether a line scan is inside a `{ ... }` comment, so that a line
+/// starting with `[` inside a comment is not mistaken for a header.
+/// `{` is literal inside a comment, `}` only terminates one, and a `;` outside
+/// a comment starts a comment that ends at the newline.
+#[derive(Default)]
+pub(crate) struct CommentTracker {
+    in_comment: bool,
+}
+
+impl CommentTracker {
+    /// Feeds one line; returns true when it is a header line (starts with `[`
+    /// outside a comment). Header lines are not scanned: their quoted values
+    /// may contain braces.
+    pub(crate) fn feed(&mut self, line: &str) -> bool {
+        if !self.in_comment && line.starts_with('[') {
+            return true;
+        }
+        for c in line.chars() {
+            match (self.in_comment, c) {
+                (false, '{') => self.in_comment = true,
+                (true, '}') => self.in_comment = false,
+                (false, ';') => break,
+                _ => {}
+            }
+        }
+        false
+    }
+}
+
 struct PgnParser {
     reader: BufReader<File>,
     line: String,
@@ -69,6 +98,7 @@ impl PgnParser {
         let mut skipped = 0;
         let mut count = 0;
         let mut line = String::new();
+        let mut comments = CommentTracker::default();
 
         loop {
             line.clear();
@@ -79,7 +109,7 @@ impl PgnParser {
                 break;
             }
 
-            if line.starts_with('[') {
+            if comments.feed(&line) {
                 if new_game {
                     count += 1;
                     if count == n {
@@ -97,6 +127,7 @@ impl PgnParser {
 
     fn read_game(&mut self) -> io::Result<String> {
         let mut new_game = false;
+        let mut comments = CommentTracker::default();
         self.game.clear();
         self.line.clear();
 
@@ -106,7 +137,7 @@ impl PgnParser {
                 break;
             }
 
-            if self.line.starts_with('[') {
+            if comments.feed(&self.line) {
                 if new_game {
                     break;
                 }
@@ -255,4 +286,80 @@ pub async fn write_game(
     write_to_end(&mut tmpf, &mut file_w)?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const GAME_WITH_COMMENT: &str =
+        "[Event \"A\"]\n\n1. e4 {first line\n[not a header]\nlast line} e5 *\n\n";
+    const SECOND: &str = "[Event \"B\"]\n\n1. d4 d5 *\n\n";
+
+    fn parser(content: &str) -> PgnParser {
+        let mut f = tempfile::tempfile().unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+        f.seek(SeekFrom::Start(0)).unwrap();
+        PgnParser::new(f)
+    }
+
+    fn count(content: &str) -> usize {
+        let mut p = parser(content);
+        let mut n = 0;
+        while p.skip_games(1).unwrap() != 0 {
+            n += 1;
+        }
+        n
+    }
+
+    fn read_first(content: &str) -> String {
+        parser(content).read_game().unwrap()
+    }
+
+    #[test]
+    fn counts_a_game_with_a_bracket_line_in_a_comment_as_one() {
+        assert_eq!(count(GAME_WITH_COMMENT), 1);
+    }
+
+    #[test]
+    fn reads_a_game_with_a_bracket_line_in_a_comment_intact() {
+        assert_eq!(read_first(GAME_WITH_COMMENT), GAME_WITH_COMMENT);
+    }
+
+    #[test]
+    fn still_splits_two_games_after_a_comment_with_a_bracket_line() {
+        let both = format!("{GAME_WITH_COMMENT}{SECOND}");
+        assert_eq!(count(&both), 2);
+        assert_eq!(read_first(&both), GAME_WITH_COMMENT);
+    }
+
+    #[test]
+    fn open_brace_inside_a_comment_is_literal() {
+        let g = "[Event \"A\"]\n\n1. e4 {a { b\n[x]\n} e5 *\n\n";
+        let both = format!("{g}{SECOND}");
+        assert_eq!(count(&both), 2);
+        assert_eq!(read_first(&both), g);
+    }
+
+    #[test]
+    fn braces_after_a_semicolon_comment_do_not_open_a_comment() {
+        let g = "[Event \"A\"]\n\n1. e4 ; note {\ne5 *\n\n";
+        let both = format!("{g}{SECOND}");
+        assert_eq!(count(&both), 2);
+        assert_eq!(read_first(&both), g);
+    }
+
+    #[test]
+    fn semicolon_inside_a_brace_comment_is_literal() {
+        let g = "[Event \"A\"]\n\n1. e4 {a ; b\n[x]\n} e5 *\n\n";
+        assert_eq!(count(g), 1);
+        assert_eq!(read_first(g), g);
+    }
+
+    #[test]
+    fn braces_in_header_values_do_not_open_a_comment() {
+        let g = "[Event \"A {\"]\n\n1. e4 e5 *\n\n";
+        let both = format!("{g}{SECOND}");
+        assert_eq!(count(&both), 2);
+    }
 }

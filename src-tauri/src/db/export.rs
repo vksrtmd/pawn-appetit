@@ -35,6 +35,15 @@ struct PgnGame {
     moves: String,
 }
 
+/// Unrated games (stored as 0) are written as `-`, the PGN convention.
+fn format_rating_tag(rating: i32) -> String {
+    if rating > 0 {
+        rating.to_string()
+    } else {
+        "-".to_string()
+    }
+}
+
 impl PgnGame {
     fn write(&self, writer: &mut impl Write) -> Result<()> {
         writeln!(
@@ -132,8 +141,8 @@ pub async fn export_to_pgn(
                 result: game.result,
                 time_control: game.time_control,
                 eco: game.eco,
-                white_elo: game.white_elo.map(|e| e.to_string()),
-                black_elo: game.black_elo.map(|e| e.to_string()),
+                white_elo: game.white_elo.map(format_rating_tag),
+                black_elo: game.black_elo.map(format_rating_tag),
                 ply_count: game.ply_count.map(|e| e.to_string()),
                 fen: game.fen.clone(),
                 moves: GameTree::from_bytes(
@@ -183,5 +192,12 @@ mod tests {
         assert!(output.contains("[Event \"Candidates\"]"));
         assert!(output.contains("[ECO \"C42\"]"));
         assert!(output.contains("1. e4 e5 2. Nf3 1-0"));
+    }
+
+    #[test]
+    fn unrated_ratings_are_written_as_dash() {
+        assert_eq!(format_rating_tag(0), "-");
+        assert_eq!(format_rating_tag(-3), "-");
+        assert_eq!(format_rating_tag(2750), "2750");
     }
 }

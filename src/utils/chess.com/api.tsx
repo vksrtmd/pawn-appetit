@@ -20,7 +20,7 @@ const ChessComPerf = z.object({
   last: z.object({
     rating: z.number(),
     date: z.number(),
-    rd: z.number(),
+    rd: z.number().optional(),
   }),
   record: z.object({
     win: z.number(),
@@ -220,19 +220,19 @@ export async function downloadChessCom(player: string, timestamp: number | null)
 const chessComGameCallbackSchema = z.object({
   game: z.object({
     moveList: z.string(),
-    pgnHeaders: z.record(z.string(), z.string()),
+    pgnHeaders: z.record(z.string(), z.union([z.string(), z.number()])),
   }),
 });
 
 export async function getChesscomGame(gameURL: string) {
-  const regex = /.*\/game\/(live|daily)\/(\d+)/;
+  const regex = /.*\/game\/(?:(live|daily)\/)?(\d+)/;
   const match = gameURL.match(regex);
 
   if (!match) {
     return "";
   }
 
-  const gameType = match[1];
+  const gameType = match[1] ?? "live";
   const gameId = match[2];
 
   const response = await fetch(`https://www.chess.com/callback/${gameType}/game/${gameId}`, {
