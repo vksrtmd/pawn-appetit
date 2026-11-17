@@ -65,8 +65,12 @@ describe("package installs", () => {
     });
 
     test("an engine without a manager or package name cannot be installed", () => {
-        expect(() => packageInstallArgs({ packageManager: "apt" })).toThrow();
-        expect(() => packageInstallArgs({ packageName: "lc0" })).toThrow();
+        expect(() => packageInstallArgs({ packageManager: "apt" })).toThrow(
+            "Package manager or package name not found",
+        );
+        expect(() => packageInstallArgs({ packageName: "lc0" })).toThrow(
+            "Package manager or package name not found",
+        );
     });
 
     test("an engine stored with the old packageCommand field still parses", () => {
