@@ -52,7 +52,7 @@ import {
 import { keyMapAtom } from "@/state/keybindings";
 import { blindfold, chessboard } from "@/styles/Chessboard.css";
 import { annotationColors, isBasicAnnotation } from "@/utils/annotation";
-import { getMaterialDiff, getVariationLine } from "@/utils/chess";
+import { getMaterialDiff, getMoveDestination, getVariationLine } from "@/utils/chess";
 import { chessopsError, forceEnPassant, positionFromFen } from "@/utils/chessops";
 import { getDocumentDir } from "@/utils/documentDir";
 import AnnotationHint from "./AnnotationHint";
@@ -482,10 +482,7 @@ function Board({
     [keyMap.BLINDFOLD.keys, () => setBlindfold((v) => !v)],
   ]);
 
-  const square = match(currentNode)
-    .with({ san: "O-O" }, ({ halfMoves }) => parseSquare(halfMoves % 2 === 1 ? "g1" : "g8"))
-    .with({ san: "O-O-O" }, ({ halfMoves }) => parseSquare(halfMoves % 2 === 1 ? "c1" : "c8"))
-    .otherwise((node) => node.move?.to);
+  const square = getMoveDestination(currentNode);
 
   const lastMove =
     currentNode.move && square !== undefined

@@ -1,7 +1,13 @@
-import { expect, test } from "vitest";
+import { parseSquare } from "chessops";
+import { describe, expect, test } from "vitest";
 import type { Token } from "@/bindings";
 import { ANNOTATION_INFO, type Annotation, NAG_INFO } from "@/utils/annotation";
-import { getPgnHeaders, hasMorePriority } from "@/utils/chess";
+import {
+    getMoveDestination,
+    getPgnHeaders,
+    hasMorePriority,
+    parseKeyboardMove,
+} from "@/utils/chess";
 
 test("NAGs are consistent", () => {
     for (const k of Object.keys(ANNOTATION_INFO)) {
@@ -64,4 +70,27 @@ test("PGN orientation detection from FEN", () => {
     const tokensNoFen: Token[] = [{ type: "Header", value: { tag: "Event", value: "Test Game" } }];
     const headersNoFen = getPgnHeaders(tokensNoFen);
     expect(headersNoFen.orientation).toBe("white");
+});
+
+test("castling destination ignores a check or mate suffix", () => {
+    const white = (san: string) =>
+        getMoveDestination({ san, halfMoves: 1, move: { from: 4, to: 7 } });
+    const black = (san: string) =>
+        getMoveDestination({ san, halfMoves: 2, move: { from: 60, to: 63 } });
+    expect(white("O-O")).toBe(parseSquare("g1"));
+    expect(white("O-O+")).toBe(parseSquare("g1"));
+    expect(white("O-O-O#")).toBe(parseSquare("c1"));
+    expect(black("O-O+")).toBe(parseSquare("g8"));
+    expect(black("O-O-O+")).toBe(parseSquare("c8"));
+    expect(getMoveDestination({ san: "Nf3+", halfMoves: 1, move: { from: 6, to: 21 } })).toBe(21);
+});
+
+describe("parseKeyboardMove castling", () => {
+    const fen = "r3k2r/pppppppp/8/8/8/8/PPPPPPPP/R3K2R w KQkq - 0 1";
+    test.each(["0-0", "O-O", "o-o", "OO", "00"])("%s castles kingside", (input) => {
+        expect(parseKeyboardMove(input, fen)).toEqual({ from: 4, to: 7 });
+    });
+    test.each(["0-0-0", "O-O-O", "o-o-o", "000"])("%s castles queenside", (input) => {
+        expect(parseKeyboardMove(input, fen)).toEqual({ from: 4, to: 0 });
+    });
 });
