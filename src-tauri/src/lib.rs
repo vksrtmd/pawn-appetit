@@ -334,11 +334,8 @@ mod engine_exit_tests {
 
         for entry in state.engine_processes.iter() {
             let mut process = entry.value().try_lock().unwrap();
-            let status = tokio::time::timeout(
-                std::time::Duration::from_secs(5),
-                process.child.wait(),
-            )
-            .await;
+            let status =
+                tokio::time::timeout(std::time::Duration::from_secs(5), process.child.wait()).await;
             assert!(status.is_ok(), "engine process still running");
         }
     }
