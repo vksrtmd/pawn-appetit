@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { type QueryClient, useQuery } from "@tanstack/react-query";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
 import { BaseDirectory, readDir } from "@tauri-apps/plugin-fs";
 import {
@@ -197,6 +197,16 @@ export function useDefaultDatabases(opened: boolean) {
         error,
         isLoading,
     };
+}
+
+/** Delete a game, then mark the tables built from the database's games as stale. */
+export async function deleteGameAndRefresh(queryClient: QueryClient, file: string, gameId: number) {
+    const result = await commands.deleteDbGame(file, gameId);
+    if (result.status !== "ok") return;
+    await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["players"] }),
+        queryClient.invalidateQueries({ queryKey: ["tournaments"] }),
+    ]);
 }
 
 /** A downloaded database is saved as `<title>.db3`, whatever title the file holds inside. */
