@@ -1,4 +1,5 @@
 import { SegmentedControl, useMantineTheme } from "@mantine/core";
+import { threadOptions } from "@/utils/engines";
 
 export default function CoresSlider(props: {
   value: number;
@@ -6,10 +7,7 @@ export default function CoresSlider(props: {
   color?: string;
 }) {
   const theme = useMantineTheme();
-  const values = Array.from(
-    { length: Math.log2(navigator.hardwareConcurrency) + 1 },
-    (_, i) => 2 ** i,
-  );
+  const values = threadOptions(props.value, navigator.hardwareConcurrency);
 
   return (
     <SegmentedControl

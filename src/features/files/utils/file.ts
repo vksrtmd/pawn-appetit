@@ -93,28 +93,23 @@ export function flattenFiles(entries: (FileMetadata | Directory)[]): FileMetadat
 }
 
 export async function processEntriesRecursively(parent: string, entries: DirEntry[]) {
-    const allEntries: (FileMetadata | Directory)[] = [];
-    for (const entry of entries) {
-        if (entry.isFile) {
-            const metadata = await readFileMetadata(await join(parent, entry.name));
-            if (!metadata) continue;
-            allEntries.push(metadata);
-        }
-        if (entry.isDirectory) {
-            const dir = await join(parent, entry.name);
-            const newEntries = await processEntriesRecursively(
-                dir,
-                await readDir(dir, { baseDir: BaseDirectory.AppLocalData }),
-            );
-            allEntries.push({
-                type: "directory",
-                name: entry.name,
-                path: dir,
-                children: newEntries,
-            });
-        }
-    }
-    return allEntries;
+    const processed = await Promise.all(
+        entries.map(async (entry): Promise<FileMetadata | Directory | null> => {
+            if (entry.isFile) {
+                return readFileMetadata(await join(parent, entry.name));
+            }
+            if (entry.isDirectory) {
+                const dir = await join(parent, entry.name);
+                const children = await processEntriesRecursively(
+                    dir,
+                    await readDir(dir, { baseDir: BaseDirectory.AppLocalData }),
+                );
+                return { type: "directory", name: entry.name, path: dir, children };
+            }
+            return null;
+        }),
+    );
+    return processed.filter((entry): entry is FileMetadata | Directory => entry !== null);
 }
 
 export async function buildFileIndex(root: string): Promise<FileMetadata[]> {
