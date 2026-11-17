@@ -20,8 +20,9 @@ import {
 } from "@mantine/core";
 import { useToggle } from "@mantine/hooks";
 import { modals } from "@mantine/modals";
-import { IconCloud, IconPhotoPlus } from "@tabler/icons-react";
+import { IconCloud, IconFolder, IconPhotoPlus } from "@tabler/icons-react";
 import { open } from "@tauri-apps/plugin-dialog";
+import { platform } from "@tauri-apps/plugin-os";
 import { useAtom } from "jotai";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -29,7 +30,7 @@ import { commands, type UciOptionConfig } from "@/bindings";
 import GoModeInput from "@/components/GoModeInput";
 import LocalImage from "@/components/LocalImage";
 import { enginesAtom } from "@/state/atoms";
-import { type LocalEngine, requiredEngineSettings } from "@/utils/engines";
+import { joinSyzygyPaths, type LocalEngine, requiredEngineSettings } from "@/utils/engines";
 import { JSONModal } from "../modals/JSONModal";
 
 interface EngineSettingsProps {
@@ -455,6 +456,30 @@ export function EngineSettings({ selected, setSelected, isMobile }: EngineSettin
                 }
                 case "string": {
                   const v = option.value;
+                  if (v.name.toLowerCase() === "syzygypath") {
+                    return (
+                      <Group key={v.name} align="end" wrap="nowrap">
+                        <TextInput
+                          flex={1}
+                          label={v.name}
+                          value={v.value || ""}
+                          onChange={(e) => setSetting(v.name, e.currentTarget.value, v.default)}
+                        />
+                        <Button
+                          variant="default"
+                          leftSection={<IconFolder size="1rem" />}
+                          onClick={async () => {
+                            const selected = await open({ multiple: true, directory: true });
+                            if (!selected) return;
+                            const dirs = Array.isArray(selected) ? selected : [selected];
+                            setSetting(v.name, joinSyzygyPaths(dirs, platform()), v.default);
+                          }}
+                        >
+                          {t("common.open")}
+                        </Button>
+                      </Group>
+                    );
+                  }
                   if (v.name.toLowerCase().includes("file")) {
                     const file = v.value ? new File([v.value], v.value) : null;
                     return (

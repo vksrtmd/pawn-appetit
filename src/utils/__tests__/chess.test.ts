@@ -1,5 +1,5 @@
 import { parseSquare } from "chessops";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type { Token } from "@/bindings";
 import { ANNOTATION_INFO, type Annotation, NAG_INFO } from "@/utils/annotation";
 import {
@@ -7,7 +7,27 @@ import {
     getPgnHeaders,
     hasMorePriority,
     parseKeyboardMove,
+    parsePGN,
 } from "@/utils/chess";
+
+vi.mock("@/bindings", () => ({
+    commands: {
+        lexPgn: vi.fn<(pgn: string) => Promise<unknown>>(async (pgn) => ({
+            status: "ok",
+            data: pgn
+                .split(" ")
+                .filter(Boolean)
+                .map((value) => ({ type: "San", value })),
+        })),
+    },
+}));
+
+test("parsePGN keeps UCI moves, as puzzle analysis passes them", async () => {
+    const tree = await parsePGN("e2e4 e7e5");
+
+    expect(tree.root.children[0]?.san).toBe("e4");
+    expect(tree.root.children[0]?.children[0]?.san).toBe("e5");
+});
 
 test("NAGs are consistent", () => {
     for (const k of Object.keys(ANNOTATION_INFO)) {

@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
     basename: vi.fn<(path: string) => Promise<string>>(),
     join: vi.fn<(...parts: string[]) => Promise<string>>(),
     getFileMetadata: vi.fn<() => Promise<{ status: "ok"; data: { last_modified: bigint } }>>(),
-    countPgnGames: vi.fn<() => Promise<{ status: "ok"; data: number }>>(),
+    countPgnGames: vi.fn<(path?: string) => Promise<{ status: "ok"; data: number }>>(),
 }));
 
 vi.mock("@tauri-apps/api/path", () => ({
@@ -76,5 +76,35 @@ describe("file index cache", () => {
 
         expect(mocks.readDir).toHaveBeenCalledTimes(2);
         expect(mocks.countPgnGames).toHaveBeenCalledTimes(2);
+    });
+
+    test("keeps directory listing order when entries resolve out of order", async () => {
+        const { processEntriesRecursively } = await import("../file");
+        // Earlier entries take longer to read, so a naive parallel push would reorder them.
+        mocks.countPgnGames.mockImplementation(async (path?: string) => {
+            const delay = String(path).includes("slow") ? 20 : 0;
+            await new Promise((r) => setTimeout(r, delay));
+            return { status: "ok", data: 1 };
+        });
+        mocks.readDir.mockResolvedValue([{ name: "inner.pgn", isFile: true, isDirectory: false }]);
+
+        const result = await processEntriesRecursively("/docs", [
+            { name: "slow.pgn", isFile: true, isDirectory: false, isSymlink: false },
+            { name: "skip.txt", isFile: true, isDirectory: false, isSymlink: false },
+            { name: "sub", isFile: false, isDirectory: true, isSymlink: false },
+            { name: "fast.pgn", isFile: true, isDirectory: false, isSymlink: false },
+        ]);
+
+        expect(result.map((e) => (e.type === "directory" ? `dir:${e.name}` : e.name))).toEqual([
+            "slow",
+            "dir:sub",
+            "fast",
+        ]);
+    });
+
+    test("reads last_modified seconds as-is", async () => {
+        const { buildFileIndex } = await import("../file");
+        const [file] = await buildFileIndex("/docs");
+        expect(file.lastModified).toBe(1_700_000_000);
     });
 });

@@ -452,3 +452,28 @@ export function useDefaultEngines(os: Platform | undefined, opened: boolean) {
         isLoading,
     };
 }
+
+/** The engine to select after the engine list changed, or undefined to keep the current one. */
+export function syncSelectedEngine(
+    engines: LocalEngine[],
+    selected: LocalEngine | null,
+): LocalEngine | undefined {
+    if (engines.length === 0) return undefined;
+    if (selected === null) return engines[0];
+    const updated = engines.find((e) => e.path === selected.path);
+    return updated && updated !== selected ? updated : undefined;
+}
+
+/** Thread counts to offer: powers of two up to the core count, plus the current value. */
+export function threadOptions(current: number, cores: number): number[] {
+    const values = Array.from({ length: Math.floor(Math.log2(cores)) + 1 }, (_, i) => 2 ** i);
+    if (current > 0 && !values.includes(current)) {
+        values.push(current);
+        values.sort((a, b) => a - b);
+    }
+    return values;
+}
+
+export function joinSyzygyPaths(dirs: string[], os: Platform): string {
+    return dirs.join(os === "windows" ? ";" : ":");
+}

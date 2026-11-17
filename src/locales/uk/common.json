@@ -236,7 +236,7 @@
         "searchSettings": "Налаштування пошуку",
         "advancedSettings": "Додаткові налаштування",
         "numOfLines": "Кількість ліній",
-        "numOfCores": "Кількість ядер",
+        "numOfThreads": "Кількість потоків",
         "sizeOfHash": "Розмір хеша",
         "editJSON": "Редагувати JSON",
         "reset": "Скинути за замовчуванням"
