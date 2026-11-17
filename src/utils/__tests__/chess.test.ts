@@ -1,7 +1,8 @@
 import { expect, test } from "vitest";
 import type { Token } from "@/bindings";
+import { createNode, defaultTree } from "@/utils/treeReducer";
 import { ANNOTATION_INFO, type Annotation, NAG_INFO } from "@/utils/annotation";
-import { getPgnHeaders, hasMorePriority } from "@/utils/chess";
+import { getPgnHeaders, getVariationLine, hasMorePriority } from "@/utils/chess";
 
 test("NAGs are consistent", () => {
     for (const k of Object.keys(ANNOTATION_INFO)) {
@@ -64,4 +65,18 @@ test("PGN orientation detection from FEN", () => {
     const tokensNoFen: Token[] = [{ type: "Header", value: { tag: "Event", value: "Test Game" } }];
     const headersNoFen = getPgnHeaders(tokensNoFen);
     expect(headersNoFen.orientation).toBe("white");
+});
+
+test("variation line stops at the last existing move for a stale path", () => {
+    const root = defaultTree().root;
+    root.children = [
+        createNode({
+            fen: "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1",
+            move: { from: 12, to: 28 },
+            san: "e4",
+            halfMoves: 1,
+        }),
+    ];
+
+    expect(getVariationLine(root, [0, 3])).toEqual(["e2e4"]);
 });
