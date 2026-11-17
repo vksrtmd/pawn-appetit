@@ -466,7 +466,7 @@
         "searchSettings": "Настройки поиска",
         "advancedSettings": "Дополнительные настройки",
         "numOfLines": "Количество линий",
-        "numOfCores": "Количество ядер",
+        "numOfThreads": "Количество потоков",
         "sizeOfHash": "Размер хеша",
         "editJSON": "Редактировать JSON",
         "reset": "Сбросить по умолчанию"

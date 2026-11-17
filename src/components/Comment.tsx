@@ -1,11 +1,20 @@
 import { Typography } from "@mantine/core";
-
+import { memo } from "react";
 import Markdown from "react-markdown";
-import rehypeRaw from "rehype-raw";
-import remarkGfm from "remark-gfm";
+import { commentRehypePlugins, isPlainText, normalizeTiptapMarkdown } from "@/utils/markdown";
 
-export function Comment({ comment }: { comment: string }) {
-  const multipleLine = comment.split("\n").filter((v) => v.trim() !== "").length > 1;
+function CommentInner({ comment }: { comment: string }) {
+  // Big repertoires have thousands of comments, most of them without any formatting
+  if (isPlainText(comment)) {
+    return (
+      <Typography style={{ display: "inline", lineHeight: "inherit" }}>
+        <span>{comment.trim()}</span>
+      </Typography>
+    );
+  }
+
+  const normalized = normalizeTiptapMarkdown(comment);
+  const multipleLine = normalized.split("\n").filter((v) => v.trim() !== "").length > 1;
 
   return (
     <Typography
@@ -28,10 +37,12 @@ export function Comment({ comment }: { comment: string }) {
             </span>
           ),
         }}
-        rehypePlugins={[rehypeRaw, remarkGfm]}
+        rehypePlugins={commentRehypePlugins}
       >
-        {comment}
+        {normalized}
       </Markdown>
     </Typography>
   );
 }
+
+export const Comment = memo(CommentInner);
