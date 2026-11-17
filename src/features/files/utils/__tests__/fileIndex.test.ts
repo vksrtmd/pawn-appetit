@@ -1,5 +1,12 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 
+import {
+    buildFileIndex,
+    getCachedFileIndex,
+    invalidateFileIndex,
+    processEntriesRecursively,
+} from "../file";
+
 const mocks = vi.hoisted(() => ({
     readDir: vi.fn<() => Promise<Array<{ name: string; isFile: boolean; isDirectory: boolean }>>>(),
     exists: vi.fn<() => Promise<boolean>>(),
@@ -32,9 +39,8 @@ vi.mock("@/bindings", () => ({
 }));
 
 describe("file index cache", () => {
-    beforeEach(async () => {
+    beforeEach(() => {
         vi.clearAllMocks();
-        const { invalidateFileIndex } = await import("../file");
         invalidateFileIndex();
 
         mocks.readDir.mockResolvedValue([
@@ -53,8 +59,6 @@ describe("file index cache", () => {
     });
 
     test("reuses indexed file metadata until invalidated", async () => {
-        const { getCachedFileIndex, invalidateFileIndex } = await import("../file");
-
         const first = await getCachedFileIndex("/docs");
         const second = await getCachedFileIndex("/docs");
 
@@ -79,7 +83,6 @@ describe("file index cache", () => {
     });
 
     test("keeps directory listing order when entries resolve out of order", async () => {
-        const { processEntriesRecursively } = await import("../file");
         // Earlier entries take longer to read, so a naive parallel push would reorder them.
         mocks.countPgnGames.mockImplementation(async (path?: string) => {
             const delay = String(path).includes("slow") ? 20 : 0;
@@ -103,7 +106,6 @@ describe("file index cache", () => {
     });
 
     test("reads last_modified seconds as-is", async () => {
-        const { buildFileIndex } = await import("../file");
         const [file] = await buildFileIndex("/docs");
         expect(file.lastModified).toBe(1_700_000_000);
     });
