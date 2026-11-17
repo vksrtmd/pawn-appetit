@@ -274,6 +274,13 @@ async function importResolvedPgnTarget(
     };
 }
 
+const LICHESS_NON_ID_PATHS = ["game", "export", "white", "black"];
+
+function lichessGameId(link: string): string {
+    const parts = new URL(/^https?:\/\//.test(link) ? link : `https://${link}`).pathname.split("/");
+    return parts.find((part) => part && !LICHESS_NON_ID_PATHS.includes(part)) ?? "";
+}
+
 async function importLinkGame(
     request: Extract<ImportRequest, { source: "Link" }>,
     context: ImportContext,
@@ -292,7 +299,7 @@ async function importLinkGame(
         }
         pgn = chesscomGame;
     } else if (request.link.includes("lichess")) {
-        const gameId = request.link.split("/")[3];
+        const gameId = lichessGameId(request.link);
         pgn = await getLichessGame(gameId);
     } else {
         return {
