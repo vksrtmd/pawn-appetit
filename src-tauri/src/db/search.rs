@@ -13,7 +13,8 @@ use shakmaty::{
 };
 use specta::Type;
 use std::{
-    collections::HashMap,
+    cmp::Reverse,
+    collections::{BinaryHeap, HashMap},
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicUsize, Ordering},
@@ -538,6 +539,91 @@ struct MatchedGame {
     fen: String,
     /// The move played from the match, as origin/destination squares.
     next_move_uci: String,
+    /// The higher of the two players' Elo, 0 when neither is recorded.
+    rating: i32,
+}
+
+/// The rating a game is ranked by: the higher player's Elo, 0 when unrecorded.
+fn game_rating(white_elo: Option<i32>, black_elo: Option<i32>) -> i32 {
+    white_elo.unwrap_or(0).max(black_elo.unwrap_or(0))
+}
+
+impl MatchedGame {
+    /// Better games sort higher; on equal rating the lower id does.
+    fn rank(&self) -> (i32, Reverse<i32>) {
+        (self.rating, Reverse(self.id))
+    }
+}
+
+impl PartialEq for MatchedGame {
+    fn eq(&self, other: &Self) -> bool {
+        self.rank() == other.rank()
+    }
+}
+impl Eq for MatchedGame {}
+impl PartialOrd for MatchedGame {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl Ord for MatchedGame {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.rank().cmp(&other.rank())
+    }
+}
+
+/// The best-rated matches seen so far, at most `capacity` of them.
+///
+/// Keeping the first matches by id would make the returned "top games" the
+/// oldest ones. A min-heap lets the worst kept game be evicted in O(log n).
+struct TopGames {
+    heap: BinaryHeap<Reverse<MatchedGame>>,
+    capacity: usize,
+}
+
+impl Default for TopGames {
+    fn default() -> Self {
+        Self::with_capacity(MAX_RETURNED_GAMES)
+    }
+}
+
+impl TopGames {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            heap: BinaryHeap::new(),
+            capacity,
+        }
+    }
+
+    /// Whether a game with this rating and id would be kept, so callers can
+    /// skip building the rest of a game that would be dropped.
+    fn wants(&self, rating: i32, id: i32) -> bool {
+        self.heap.len() < self.capacity
+            || self
+                .heap
+                .peek()
+                .is_some_and(|worst| (rating, Reverse(id)) > worst.0.rank())
+    }
+
+    fn push(&mut self, game: MatchedGame) {
+        if !self.wants(game.rating, game.id) {
+            return;
+        }
+        if self.heap.len() >= self.capacity {
+            self.heap.pop();
+        }
+        self.heap.push(Reverse(game));
+    }
+
+    fn merge(&mut self, other: TopGames) {
+        for Reverse(game) in other.heap {
+            self.push(game);
+        }
+    }
+
+    fn into_vec(self) -> Vec<MatchedGame> {
+        self.heap.into_iter().map(|Reverse(game)| game).collect()
+    }
 }
 
 /// Find where a game first matches, and what was played from there.
@@ -656,6 +742,8 @@ fn load_games_batch(
             games::pawn_home,
             games::white_material,
             games::black_material,
+            games::white_elo,
+            games::black_elo,
         ))
         .offset(offset)
         .limit(limit)
@@ -667,7 +755,7 @@ fn load_games_batch(
 /// A game row as the search path consumes it.
 ///
 /// Id, white id, black id, date, result, moves, starting FEN, pawn home,
-/// white material, black material.
+/// white material, black material, white Elo, black Elo.
 type SearchGameRow = (
     i32,
     i32,
@@ -679,6 +767,8 @@ type SearchGameRow = (
     i32,
     i32,
     i32,
+    Option<i32>,
+    Option<i32>,
 );
 
 /// Load the next games with an id above `after_id`, applying `filter` if given.
@@ -708,6 +798,8 @@ fn load_filtered_games_batch(
             games::pawn_home,
             games::white_material,
             games::black_material,
+            games::white_elo,
+            games::black_elo,
         ))
         .filter(games::id.gt(after_id))
         .order(games::id.asc())
@@ -946,7 +1038,7 @@ pub async fn search_position(
         #[derive(Default)]
         struct ThreadLocalResults {
             position_stats: HashMap<String, PositionStats>,
-            matched_ids: Vec<MatchedGame>,
+            matched_ids: TopGames,
         }
 
         // Process games in parallel
@@ -966,6 +1058,8 @@ pub async fn search_position(
                     pawn_home,
                     white_material,
                     black_material,
+                    white_elo,
+                    black_elo,
                 )| {
                     // Check for cancellation (lock-free)
                     if state.new_request.available_permits() == 0 {
@@ -1002,9 +1096,11 @@ pub async fn search_position(
                     if let Ok(Some(found)) = get_move_after_match(moves, fen, &position_query) {
                         let next_move = found.next_move.clone();
                         // Save matching game ID (collect at least 100 games, but allow more)
-                        if acc.matched_ids.len() < MAX_RETURNED_GAMES {
+                        let rating = game_rating(*white_elo, *black_elo);
+                        if acc.matched_ids.wants(rating, *id) {
                             acc.matched_ids.push(MatchedGame {
                                 id: *id,
+                                rating,
                                 ply: found.ply,
                                 fen: Fen::from_position(
                                     found.position.clone(),
@@ -1055,19 +1151,15 @@ pub async fn search_position(
                     stats1.draw += stats2.draw;
                 }
 
-                // Merge matched IDs (keep within limit)
-                for entry in acc2.matched_ids {
-                    if acc1.matched_ids.len() < MAX_RETURNED_GAMES {
-                        acc1.matched_ids.push(entry);
-                    }
-                }
+                // Merge matched games (keep the best rated)
+                acc1.matched_ids.merge(acc2.matched_ids);
 
                 acc1
             });
 
         // Extract final results (no Arc unwrapping needed)
         position_stats = final_results.position_stats;
-        matched_game_ids = final_results.matched_ids;
+        matched_game_ids = final_results.matched_ids.into_vec();
         processed_count = processed_count_atomic.load(Ordering::Relaxed);
         games_with_basic_filter_match = filter_match_count_atomic.load(Ordering::Relaxed);
         let games_rejected_by_position_filter =
@@ -1122,7 +1214,7 @@ pub async fn search_position(
 
         // Collect results from all batches
         let mut global_position_stats = HashMap::<String, PositionStats>::new();
-        let mut global_matched_ids = Vec::<MatchedGame>::new();
+        let mut global_matched_ids = TopGames::default();
         let mut cursor = 0i32;
 
         loop {
@@ -1155,9 +1247,9 @@ pub async fn search_position(
 
             // Thread-local accumulator structure
             #[derive(Default)]
-            struct ThreadLocalResults {
+        struct ThreadLocalResults {
                 position_stats: HashMap<String, PositionStats>,
-                matched_ids: Vec<MatchedGame>,
+                matched_ids: TopGames,
             }
 
             // Process batch using parallel fold pattern with thread-local accumulators
@@ -1177,6 +1269,8 @@ pub async fn search_position(
                         _pawn_home,
                         _white_material,
                         _black_material,
+                        white_elo,
+                        black_elo,
                     )| {
                         // Check for cancellation (lock-free)
                         if state.new_request.available_permits() == 0 {
@@ -1201,9 +1295,11 @@ pub async fn search_position(
                         if let Ok(Some(found)) = get_move_after_match(moves, fen, &position_query) {
                             let next_move = found.next_move;
                             // Thread-local update (no locks needed!)
-                            if acc.matched_ids.len() < MAX_RETURNED_GAMES {
+                            let rating = game_rating(*white_elo, *black_elo);
+                            if acc.matched_ids.wants(rating, *id) {
                                 acc.matched_ids.push(MatchedGame {
                                     id: *id,
+                                    rating,
                                     ply: found.ply,
                                     fen: Fen::from_position(
                                         found.position.clone(),
@@ -1252,12 +1348,8 @@ pub async fn search_position(
                         stats1.draw += stats2.draw;
                     }
 
-                    // Merge matched IDs (keep within limit)
-                    for entry in acc2.matched_ids {
-                        if acc1.matched_ids.len() < MAX_RETURNED_GAMES {
-                            acc1.matched_ids.push(entry);
-                        }
-                    }
+                    // Merge matched games (keep the best rated)
+                    acc1.matched_ids.merge(acc2.matched_ids);
 
                     acc1
                 });
@@ -1279,11 +1371,7 @@ pub async fn search_position(
             }
 
             // Merge matched IDs (keep within limit)
-            for entry in batch_results.matched_ids {
-                if global_matched_ids.len() < MAX_RETURNED_GAMES {
-                    global_matched_ids.push(entry);
-                }
-            }
+            global_matched_ids.merge(batch_results.matched_ids);
 
             offset += BATCH_SIZE;
 
@@ -1316,7 +1404,7 @@ pub async fn search_position(
 
         // Extract final results from global accumulators (no Arc unwrapping needed)
         position_stats = global_position_stats;
-        matched_game_ids = global_matched_ids;
+        matched_game_ids = global_matched_ids.into_vec();
         processed_count = global_processed_count.load(Ordering::Relaxed);
         games_with_basic_filter_match = global_filter_match_count.load(Ordering::Relaxed);
 
@@ -1566,6 +1654,8 @@ pub async fn is_position_in_db(
                 games::pawn_home,
                 games::white_material,
                 games::black_material,
+                games::white_elo,
+                games::black_elo,
             ))
             .load(db)?;
         *games = Arc::new(all_games);
@@ -1585,6 +1675,8 @@ pub async fn is_position_in_db(
             end_pawn_home,
             white_material,
             black_material,
+            _white_elo,
+            _black_elo,
         )| {
             if state.new_request.available_permits() == 0 {
                 return false;
@@ -2276,5 +2368,57 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!((result.ply, result.next_move.as_str()), (0, "e4"));
+    }
+}
+
+#[cfg(test)]
+mod top_games_tests {
+    use super::*;
+
+    fn game(id: i32, rating: i32) -> MatchedGame {
+        MatchedGame {
+            id,
+            ply: 0,
+            fen: String::new(),
+            next_move_uci: String::new(),
+            rating,
+        }
+    }
+
+    fn ids(top: TopGames) -> Vec<i32> {
+        let mut ids: Vec<i32> = top.into_vec().into_iter().map(|g| g.id).collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn keeps_the_highest_rated_games_not_the_first_ones() {
+        let mut top = TopGames::with_capacity(3);
+        // Ids ascend while ratings are mixed, so "first three" and "best three" differ.
+        for (id, rating) in [(1, 1500), (2, 1600), (3, 1700), (4, 2800), (5, 1000), (6, 2700)] {
+            top.push(game(id, rating));
+        }
+        assert_eq!(ids(top), vec![3, 4, 6]);
+    }
+
+    #[test]
+    fn merging_keeps_the_best_across_both_sides() {
+        let mut a = TopGames::with_capacity(2);
+        a.push(game(1, 2000));
+        a.push(game(2, 1000));
+        let mut b = TopGames::with_capacity(2);
+        b.push(game(3, 2500));
+        b.push(game(4, 1500));
+        a.merge(b);
+        assert_eq!(ids(a), vec![1, 3]);
+    }
+
+    #[test]
+    fn ties_prefer_the_lower_id() {
+        let mut top = TopGames::with_capacity(2);
+        for id in [5, 3, 9, 1] {
+            top.push(game(id, 2000));
+        }
+        assert_eq!(ids(top), vec![1, 3]);
     }
 }

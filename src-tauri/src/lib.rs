@@ -75,6 +75,8 @@ pub type GameData = (
     i32,
     i32,
     i32,
+    Option<i32>,
+    Option<i32>,
 );
 
 type LineCacheKey = (GameQueryJs, std::path::PathBuf);
