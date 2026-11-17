@@ -29,3 +29,6 @@ tsconfig.tsbuildinfo
 # Root env files (secrets)
 .env
 .env.*
+
+# pnpm falls back to a store at the mount root when the home dir is on another filesystem
+.pnpm-store

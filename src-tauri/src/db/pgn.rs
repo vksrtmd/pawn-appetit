@@ -233,6 +233,14 @@ pub struct TempGame {
     pub tree: GameTree,
 }
 
+/// Maps a rating tag to the "unrated" sentinel `0` unless it is a positive number.
+fn parse_rating(value: &[u8]) -> i32 {
+    std::str::from_utf8(value)
+        .ok()
+        .and_then(|v| v.trim().parse::<i16>().ok())
+        .map_or(0, |rating| i32::from(rating.max(0)))
+}
+
 pub struct Importer {
     game: TempGame,
     variants: Vec<GameTree>,
@@ -270,9 +278,9 @@ impl Visitor for Importer {
         } else if key == b"Black" {
             self.game.black_name = Some(value.decode_utf8_lossy().into_owned());
         } else if key == b"WhiteElo" {
-            self.game.white_elo = btoi::btoi(value.as_bytes()).ok();
+            self.game.white_elo = Some(parse_rating(value.as_bytes()));
         } else if key == b"BlackElo" {
-            self.game.black_elo = btoi::btoi(value.as_bytes()).ok();
+            self.game.black_elo = Some(parse_rating(value.as_bytes()));
         } else if key == b"TimeControl" {
             self.game.time_control = Some(value.decode_utf8_lossy().into_owned());
         } else if key == b"ECO" {
@@ -601,5 +609,39 @@ mod test {
 
         assert_eq!(game.tree, GameTree::from_bytes(&bytes, None).unwrap());
         assert_eq!(trim(&game.tree.to_string()), trim(pgn));
+    }
+
+    fn ratings(value: &str) -> (Option<i32>, Option<i32>) {
+        let pgn = format!("[WhiteElo \"{value}\"]\n[BlackElo \"{value}\"]\n\n1. e4 *");
+        let mut reader = BufferedReader::new_cursor(pgn.as_bytes());
+        let mut importer = Importer::new(None);
+        let game = reader.read_game(&mut importer).unwrap().flatten().unwrap();
+        (game.white_elo, game.black_elo)
+    }
+
+    #[test]
+    fn unusable_rating_tags_import_as_unrated() {
+        for value in ["?", "??", "-", "0", "", "N/A", "-5", "999999"] {
+            assert_eq!(ratings(value), (Some(0), Some(0)), "{value:?}");
+        }
+    }
+
+    #[test]
+    fn numeric_rating_tags_import_as_numbers() {
+        for (value, expected) in [("2100", 2100), ("02300", 2300), (" 2100 ", 2100)] {
+            assert_eq!(
+                ratings(value),
+                (Some(expected), Some(expected)),
+                "{value:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn absent_rating_tags_stay_unknown() {
+        let mut reader = BufferedReader::new_cursor("1. e4 *".as_bytes());
+        let mut importer = Importer::new(None);
+        let game = reader.read_game(&mut importer).unwrap().flatten().unwrap();
+        assert_eq!((game.white_elo, game.black_elo), (None, None));
     }
 }
