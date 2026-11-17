@@ -30,7 +30,7 @@ import MoveControls from "@/components/MoveControls";
 import { arrowColors } from "@/components/panels/analysis/BestMoves";
 import ShowMaterial from "@/components/ShowMaterial";
 import { TreeStateContext } from "@/components/TreeStateContext";
-import { updateCardPerformance } from "@/features/files/utils/opening";
+import { isAwaitingMove, updateCardPerformance } from "@/features/files/utils/opening";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import {
   autoPromoteAtom,
@@ -38,6 +38,7 @@ import {
   blindfoldAtom,
   currentEvalOpenAtom,
   currentTabAtom,
+  currentInvisibleAtom,
   deckAtomFamily,
   enableBoardScrollAtom,
   eraseDrawablesOnClickAtom,
@@ -182,6 +183,7 @@ function Board({
   );
 
   const goToNext = useStore(store, (s) => s.goToNext);
+  const setPracticePath = useStore(store, (s) => s.setPracticePath);
   const goToPrevious = useStore(store, (s) => s.goToPrevious);
   const storeMakeMove = useStore(store, (s) => s.makeMove);
   const setHeaders = useStore(store, (s) => s.setHeaders);
@@ -238,6 +240,7 @@ function Board({
   useHotkeys([
     [keyMap.SWAP_ORIENTATION.keys, () => (toggleOrientation ?? localToggleOrientation)()],
   ]);
+  const invisible = useAtomValue(currentInvisibleAtom);
   const [currentTab, setCurrentTab] = useAtom(currentTabAtom);
   const [evalOpen, setEvalOpen] = useAtom(currentEvalOpenAtom);
 
@@ -270,6 +273,7 @@ function Board({
           color: "red",
         });
         await new Promise((resolve) => setTimeout(resolve, 500));
+        setPracticePath(null);
         goToNext();
       } else {
         storeMakeMove({
@@ -391,7 +395,8 @@ function Board({
     }
   }
 
-  if (currentNode.shapes.length > 0) {
+  const awaitingMove = practicing && isAwaitingMove(deck.positions, currentNode.fen, invisible);
+  if (!awaitingMove && currentNode.shapes.length > 0) {
     shapes = shapes.concat(currentNode.shapes);
   }
 

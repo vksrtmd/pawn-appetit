@@ -111,3 +111,12 @@ export function updateCardPerformance(
         };
     });
 }
+
+/** True while Repertoire Review waits for the Player's move: on a reviewed position with the answer hidden. */
+export function isAwaitingMove(
+    positions: ReadonlyArray<{ fen: string }>,
+    fen: string,
+    answerHidden: boolean,
+) {
+    return answerHidden && positions.some((p) => p.fen === fen);
+}
