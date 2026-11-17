@@ -735,7 +735,7 @@
         "searchSettings": "Configuración de búsqueda",
         "advancedSettings": "Configuración avanzada",
         "numOfLines": "Número de líneas",
-        "numOfCores": "Número de núcleos",
+        "numOfThreads": "Número de hilos",
         "sizeOfHash": "Tamaño del hash",
         "editJSON": "Editar JSON",
         "reset": "Restablecer valores predeterminados"
