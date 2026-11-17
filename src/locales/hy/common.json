@@ -466,7 +466,7 @@
         "searchSettings": "Որոնման կարգավորումներ",
         "advancedSettings": "Ընդլայնված կարգավորումներ",
         "numOfLines": "Տողերի քանակը",
-        "numOfCores": "Միջուկների քանակը",
+        "numOfThreads": "Թելերի քանակը",
         "sizeOfHash": "Հեշի չափը",
         "editJSON": "Խմբագրել JSON",
         "reset": "Վերականգնել լռելյայն արժեքները"

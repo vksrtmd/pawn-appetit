@@ -9,7 +9,7 @@ import { useStore } from "zustand";
 import { Chessground } from "@/components/Chessground";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import PromotionModal from "@/features/boards/components/PromotionModal";
-import { blindfoldAtom, showCoordinatesAtom } from "@/state/atoms";
+import { blindfoldAtom, showCoordinatesAtom, showDestsAtom } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
 import { blindfold, chessboard } from "@/styles/Chessboard.css";
 import { uciNormalize } from "@/utils/chess";
@@ -44,6 +44,7 @@ function PuzzleBoard({
   const makeMove = useStore(store, (s) => s.makeMove);
   const makeMoves = useStore(store, (s) => s.makeMoves);
   const reset = useForceUpdate();
+  const showDests = useAtomValue(showDestsAtom);
 
   const currentNode = getNodeAtPath(root, position);
 
@@ -183,7 +184,8 @@ function PuzzleBoard({
           movable={{
             free: false,
             color: puzzle && equal(position, Array(currentMove).fill(0)) ? turn : undefined,
-            dests: dests,
+            dests,
+            showDests,
             events: {
               after: (orig, dest) => {
                 const from = parseSquare(orig);

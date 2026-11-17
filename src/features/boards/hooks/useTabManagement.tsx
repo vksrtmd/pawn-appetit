@@ -91,12 +91,17 @@ export function useTabManagement() {
               cancel: t("common.unsavedChanges.closeWithoutSaving"),
             },
             onConfirm: async () => {
-              saveToFile({
-                dir: documentDir,
-                setCurrentTab,
-                tab: currentTab,
-                store,
-              });
+              try {
+                await saveToFile({
+                  dir: documentDir,
+                  setCurrentTab,
+                  tab: currentTab,
+                  store,
+                });
+              } catch {
+                // The failed write was already reported; keep the tab open so the edits survive.
+                return;
+              }
               closeTab(value, true);
             },
             onCancel: () => {
