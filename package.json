@@ -4,7 +4,8 @@
   "type": "module",
   "scripts": {
     "start-vite": "vite",
-    "build-vite": "tsc --noEmit && vite build",
+    "build-vite": "pnpm typecheck && vite build",
+    "typecheck": "tsc --noEmit",
     "build": "tauri build --no-bundle",
     "dev": "tauri dev",
     "android:build": "tauri android build",
