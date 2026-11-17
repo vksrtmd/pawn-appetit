@@ -255,7 +255,13 @@ where
 
     let result = async {
         let mut file = std::fs::File::create(&part)?;
-        drain_stream(stream, total, |chunk| Ok(file.write_all(chunk)?), on_progress).await?;
+        drain_stream(
+            stream,
+            total,
+            |chunk| Ok(file.write_all(chunk)?),
+            on_progress,
+        )
+        .await?;
         file.sync_all()?;
         std::fs::rename(&part, path)?;
         Ok(())
@@ -318,7 +324,6 @@ pub fn extract_atomic(target: &Path, kind: ArchiveKind, data: Vec<u8>) -> Result
 
     Ok(())
 }
-
 
 fn unsafe_archive_error(message: impl Into<String>) -> Error {
     Error::PackageManager(format!("Unsafe archive entry: {}", message.into()))
@@ -659,8 +664,8 @@ mod fs_tests {
         download_atomic, ensure_inside, extract_atomic, extract_tar_file, unzip_file, ArchiveKind,
     };
     use crate::error::Error;
-    use futures_util::stream;
     use flate2::{write::GzEncoder, Compression};
+    use futures_util::stream;
     use std::{
         io::{Cursor, Write},
         path::Path,
@@ -884,7 +889,10 @@ mod fs_tests {
         extract_atomic(dir.path(), ArchiveKind::Zip, archive).unwrap();
 
         assert!(!dir.path().join("engine/stale.txt").exists());
-        assert_eq!(std::fs::read(dir.path().join("engine/new.txt")).unwrap(), b"new");
+        assert_eq!(
+            std::fs::read(dir.path().join("engine/new.txt")).unwrap(),
+            b"new"
+        );
         assert_eq!(std::fs::read(dir.path().join("keep.txt")).unwrap(), b"keep");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
     }
@@ -901,7 +909,10 @@ mod fs_tests {
 
         assert!(extract_atomic(dir.path(), ArchiveKind::Zip, archive).is_err());
 
-        assert_eq!(std::fs::read(dir.path().join("engine/old.txt")).unwrap(), b"old");
+        assert_eq!(
+            std::fs::read(dir.path().join("engine/old.txt")).unwrap(),
+            b"old"
+        );
         assert!(!dir.path().join("engine/new.txt").exists());
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
