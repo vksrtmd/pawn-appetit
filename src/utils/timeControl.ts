@@ -7,12 +7,13 @@ type TimeControlCategory =
     | "daily"
     | "correspondence";
 
-export function getTimeControl(website: string, timeControl: string): TimeControlCategory {
-    if (website === "Chess.com" && timeControl.startsWith("1/")) {
+export function getTimeControl(website: string | null, timeControl: string): TimeControlCategory {
+    // Daily and correspondence are recognisable from the control string alone.
+    if (timeControl.startsWith("1/")) {
         return "daily";
     }
 
-    if (website === "Lichess" && timeControl === "-") {
+    if (timeControl === "-") {
         return "correspondence";
     }
 
