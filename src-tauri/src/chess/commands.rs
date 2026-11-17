@@ -117,6 +117,15 @@ pub async fn analyze_game(
     GameAnalysisService::analyze_game(id, engine, go_mode, options, uci_options, state, app).await
 }
 
+/// Cancel the running game review `id`: its engine process is killed and `analyze_game` returns
+/// `Error::AnalysisCancelled`. Does nothing when no such review is running.
+#[tauri::command]
+#[specta::specta]
+pub async fn cancel_analysis(id: String, state: tauri::State<'_, AppState>) -> Result<(), Error> {
+    state.analysis_cancel.cancel(&id);
+    Ok(())
+}
+
 /// Query a UCI engine for its configuration (name and options).
 #[tauri::command]
 #[specta::specta]

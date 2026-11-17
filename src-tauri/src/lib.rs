@@ -20,7 +20,7 @@ mod telemetry;
 
 use std::sync::{Arc, Mutex};
 
-use chess::{BestMovesPayload, EngineProcess, ReportProgress};
+use chess::{AnalysisCancelRegistry, BestMovesPayload, EngineProcess, ReportProgress};
 use dashmap::DashMap;
 use db::{DatabaseProgress, GameQueryJs, NormalizedGame, PositionStats};
 use derivative::Derivative;
@@ -32,8 +32,8 @@ use sysinfo::{RefreshKind, SystemExt};
 use tauri::{AppHandle, Manager};
 
 use crate::chess::{
-    analyze_game, get_best_moves, get_engine_config, get_engine_logs, kill_engine, kill_engines,
-    stop_engine,
+    analyze_game, cancel_analysis, get_best_moves, get_engine_config, get_engine_logs, kill_engine,
+    kill_engines, stop_engine,
 };
 use crate::db::{
     build_position_index, clear_games, convert_pgn, create_indexes, delete_database,
@@ -97,6 +97,7 @@ pub struct AppState {
     pgn_offsets: DashMap<String, Vec<u64>>,
     fide_players: RwLock<Vec<FidePlayer>>,
     engine_processes: DashMap<(String, String), Arc<tokio::sync::Mutex<EngineProcess>>>,
+    analysis_cancel: AnalysisCancelRegistry,
     auth: AuthState,
 }
 
@@ -126,6 +127,7 @@ pub async fn run() {
             find_fide_player,
             get_best_moves,
             analyze_game,
+            cancel_analysis,
             stop_engine,
             kill_engine,
             kill_engines,

@@ -93,7 +93,7 @@ function EngineSettingsForm({
         <>
           <Group grow>
             <Text size="sm" fw="bold">
-              {t("features.engines.settings.numOfCores")}
+              {t("features.engines.settings.numOfThreads")}
             </Text>
             <CoresSlider
               value={Number(threads.value || 1)}

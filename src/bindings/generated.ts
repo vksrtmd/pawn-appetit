@@ -44,6 +44,18 @@ async analyzeGame(id: string, engine: string, goMode: GoMode, options: AnalysisO
 }
 },
 /**
+ * Cancel the running game review `id`: its engine process is killed and `analyze_game` returns
+ * `Error::AnalysisCancelled`. Does nothing when no such review is running.
+ */
+async cancelAnalysis(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("cancel_analysis", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Stop a specific engine process (without killing it) by engine name and tab.
  */
 async stopEngine(engine: string, tab: string) : Promise<Result<null, string>> {

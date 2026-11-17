@@ -466,7 +466,7 @@
         "searchSettings": "Arama ayarları",
         "advancedSettings": "Gelişmiş ayarlar",
         "numOfLines": "Varyant sayısı",
-        "numOfCores": "Çekirdek sayısı",
+        "numOfThreads": "İş parçacığı sayısı",
         "sizeOfHash": "Hash boyutu",
         "editJSON": "JSON olarak düzenle",
         "reset": "Varsayılana sıfırla"
