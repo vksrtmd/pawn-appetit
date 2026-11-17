@@ -1,3 +1,5 @@
+import { type Atom, atom } from "jotai";
+import { unwrap } from "jotai/utils";
 import { BaseDirectory, readTextFile, remove, writeTextFile } from "@tauri-apps/plugin-fs";
 import type {
     AsyncStorage,
@@ -95,4 +97,34 @@ export function createAsyncZodStorage<Value>(
             storage.removeItem(key);
         },
     };
+}
+
+export type Loadable<V> =
+    | { state: "loading" }
+    | { state: "hasError"; error: unknown }
+    | { state: "hasData"; data: Awaited<V> };
+
+const LOADING = { state: "loading" } as const;
+
+/**
+ * Wraps an atom so reading it never suspends or throws: the value arrives as
+ * `{ state, data, error }`. Stands in for jotai's deprecated `loadable`.
+ */
+export function loadable<V>(anAtom: Atom<V>): Atom<Loadable<V>> {
+    const settled = atom((get): Loadable<V> | Promise<Loadable<V>> => {
+        let value: V;
+        try {
+            value = get(anAtom);
+        } catch (error) {
+            return { state: "hasError", error };
+        }
+        if (!(value instanceof Promise)) {
+            return { state: "hasData", data: value as Awaited<V> };
+        }
+        return value.then(
+            (data: Awaited<V>) => ({ state: "hasData", data }),
+            (error: unknown) => ({ state: "hasError", error }),
+        );
+    });
+    return unwrap(settled, () => LOADING);
 }

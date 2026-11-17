@@ -3,12 +3,13 @@ import { parseUci } from "chessops";
 import { INITIAL_FEN, makeFen } from "chessops/fen";
 import equal from "fast-deep-equal";
 import { atom } from "jotai";
-import { atomFamily, atomWithStorage, loadable } from "jotai/utils";
+import { atomWithStorage } from "jotai/utils";
+import { atomFamily } from "jotai-family";
 import type { BestMoves, GoMode } from "@/bindings";
 import { positionFromFen, swapMove } from "@/utils/chessops";
 import { type Engine, type EngineSettings, engineSchema } from "@/utils/engines";
 import { getWinChance, normalizeScore } from "@/utils/score";
-import { createAsyncZodStorage, fileStorage, zodArray } from "./utils";
+import { createAsyncZodStorage, fileStorage, loadable, zodArray } from "./utils";
 import { activeTabAtom } from "./uiAtoms";
 
 // Engine list

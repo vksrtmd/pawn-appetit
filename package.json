@@ -70,6 +70,7 @@
     "i18next": "^26.3.6",
     "immer": "^11.1.15",
     "jotai": "^2.20.2",
+    "jotai-family": "^1.1.0",
     "lz-string": "^1.5.0",
     "mantine-contextmenu": "^9.4.0",
     "mantine-datatable": "^9.4.0",
