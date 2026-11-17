@@ -44,6 +44,7 @@ export default defineConfig({
     },
     test: {
         environment: "jsdom",
+        setupFiles: ["./src/test/setup.ts"],
         // Agent worktrees (.claude/worktrees) and the pnpm store sit inside the repo.
         exclude: [...configDefaults.exclude, ".claude/**", ".pnpm-store/**"],
         env: { TZ: "UTC" },

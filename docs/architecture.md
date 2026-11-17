@@ -52,3 +52,5 @@ Rust backend checks use `--no-default-features` so contributors can run unit tes
 Run the desktop app with `pnpm dev`. Build frontend assets with `pnpm build-vite`. Build the Tauri app with `pnpm tauri build`.
 
 For backend-only work, prefer focused Rust tests under `src-tauri/src/` and run `pnpm test:rust`. For frontend work, add Vitest coverage near the changed components or hooks and run `pnpm test`.
+
+Component tests use React Testing Library: render with `renderWithProviders` from `src/test/render.tsx` (wraps `MantineProvider`; `src/test/setup.ts` adds the jsdom shims and jest-dom matchers). Mock `react-i18next` and `@/bindings` per test.
