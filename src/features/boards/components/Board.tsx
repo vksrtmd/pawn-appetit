@@ -15,7 +15,6 @@ import { writeFile } from "@tauri-apps/plugin-fs";
 import { makeSquare, type NormalMove, parseSquare, parseUci, type SquareName } from "chessops";
 import { chessgroundDests, chessgroundMove } from "chessops/compat";
 import { makeSan } from "chessops/san";
-import domtoimage from "dom-to-image";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
 import { useContextMenu } from "mantine-contextmenu";
 import { memo, useCallback, useContext, useEffect, useMemo, useState } from "react";
@@ -55,6 +54,7 @@ import { annotationColors, isBasicAnnotation } from "@/utils/annotation";
 import { getMaterialDiff, getMoveDestination, getVariationLine } from "@/utils/chess";
 import { chessopsError, forceEnPassant, positionFromFen } from "@/utils/chessops";
 import { getDocumentDir } from "@/utils/documentDir";
+import { renderBoardSnapshot } from "../utils/boardSnapshot";
 import AnnotationHint from "./AnnotationHint";
 import EvalBar from "./EvalBar";
 import MoveInput from "./MoveInput";
@@ -66,13 +66,7 @@ const SMALL_BRUSH = 4;
 
 export async function saveBoardSnapshot(boardRef: React.MutableRefObject<HTMLDivElement | null>) {
   const ref = boardRef.current;
-  if (ref == null) return;
-
-  // We must get the first children three levels below, as it has the right dimensions.
-  const refChildNode = ref.children[0]?.children[0]?.children[0] as HTMLElement | undefined;
-  if (refChildNode == null) return;
-
-  const blob = await domtoimage.toBlob(refChildNode);
+  const blob = ref && (await renderBoardSnapshot(ref));
   if (blob == null) return;
 
   const documentsDirPath = await getDocumentDir();
