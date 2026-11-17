@@ -1,5 +1,11 @@
-import { beforeEach, describe, expect, test, vi } from "vitest";
-import { openFile, openFileAndRemember } from "../files";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
+import {
+    createFile,
+    createTempImportFile,
+    nowEpochSeconds,
+    openFile,
+    openFileAndRemember,
+} from "../files";
 import { getRecentFiles } from "../recentFiles";
 import { deserializeStorageValue } from "../tabStateStorage";
 
@@ -123,5 +129,49 @@ describe("openFile", () => {
         expect(mocks.exists).toHaveBeenCalledWith(
             "/home/daniel/Downloads/Naroditsky-Bortnyk_Jobava-London.info",
         );
+    });
+});
+
+describe("file lastModified is epoch seconds", () => {
+    const NOW_MS = Date.UTC(2026, 10, 17, 12, 34, 56, 789);
+    const NOW_S = Math.floor(NOW_MS / 1000);
+
+    beforeEach(() => {
+        vi.clearAllMocks();
+        vi.useFakeTimers();
+        vi.setSystemTime(NOW_MS);
+        mocks.countPgnGames.mockResolvedValue({ status: "ok", data: 1 });
+        mocks.readGames.mockResolvedValue({ status: "ok", data: ['[Event "A"]\n\n*\n\n'] });
+        mocks.createTab.mockResolvedValue("tab-1");
+        mocks.parsePGN.mockResolvedValue({ headers: { event: "A" } });
+        mocks.exists.mockResolvedValue(false);
+    });
+
+    afterEach(() => {
+        vi.useRealTimers();
+    });
+
+    test("nowEpochSeconds returns whole epoch seconds", () => {
+        expect(nowEpochSeconds()).toBe(NOW_S);
+    });
+
+    test("openFile stamps the tab source with epoch seconds", async () => {
+        await openFile("/docs/a.pgn", vi.fn<() => void>(), vi.fn<() => void>());
+
+        expect(mocks.createTab).toHaveBeenCalledWith(
+            expect.objectContaining({ srcInfo: expect.objectContaining({ lastModified: NOW_S }) }),
+        );
+    });
+
+    test("createFile returns metadata stamped with epoch seconds", async () => {
+        const result = await createFile({ filename: "new", filetype: "game", dir: "/docs" });
+
+        expect(result.unwrap().lastModified).toBe(NOW_S);
+    });
+
+    test("createTempImportFile stamps epoch seconds", async () => {
+        const file = await createTempImportFile("*");
+
+        expect(file.lastModified).toBe(NOW_S);
     });
 });

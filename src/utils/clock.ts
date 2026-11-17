@@ -8,14 +8,14 @@ function calculateProgress(
     clock: number | null,
     tc: TimeControlField | null,
 ) {
-    if (!clock) {
+    if (clock === null || clock === 0) {
         return 0;
     }
     if (tc) {
-        return clock / (tc.seconds / 1000);
+        return tc.seconds > 0 ? clock / (tc.seconds / 1000) : 0;
     }
-    if (timeControl) {
-        return clock / (timeControl[0].seconds / 1000);
+    if (timeControl?.length) {
+        return timeControl[0].seconds > 0 ? clock / (timeControl[0].seconds / 1000) : 0;
     }
     if (root.children.length > 0 && root.children[0].clock) {
         return clock / root.children[0].clock;
@@ -87,14 +87,14 @@ export function getClockInfo({
     let blackTc: TimeControlField | null = null;
 
     if (headers.white_time_control) {
-        whiteTc = parseTimeControl(headers.white_time_control)[0];
+        whiteTc = parseTimeControl(headers.white_time_control)[0] ?? null;
     } else if (timeControl) {
-        whiteTc = timeControl[0];
+        whiteTc = timeControl[0] ?? null;
     }
     if (headers.black_time_control) {
-        blackTc = parseTimeControl(headers.black_time_control)[0];
+        blackTc = parseTimeControl(headers.black_time_control)[0] ?? null;
     } else if (timeControl) {
-        blackTc = timeControl[0];
+        blackTc = timeControl[0] ?? null;
     }
 
     let { whiteSeconds, blackSeconds } = match(pos?.turn)
@@ -115,18 +115,18 @@ export function getClockInfo({
     if (position.length <= 1 && timeControl) {
         if (timeControl.length > 0) {
             const seconds = timeControl[0].seconds / 1000;
-            if (!whiteSeconds) {
+            if (whiteSeconds === undefined) {
                 whiteSeconds = seconds;
             }
-            if (!blackSeconds) {
+            if (blackSeconds === undefined) {
                 blackSeconds = seconds;
             }
         }
     }
-    if (whiteTime) {
+    if (whiteTime !== undefined) {
         whiteSeconds = whiteTime / 1000;
     }
-    if (blackTime) {
+    if (blackTime !== undefined) {
         blackSeconds = blackTime / 1000;
     }
 

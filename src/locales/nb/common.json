@@ -236,7 +236,7 @@
         "searchSettings": "Instilinger for søk",
         "advancedSettings": "Avanserte innstillinger",
         "numOfLines": "Antall varianter",
-        "numOfCores": "Antall kjerner",
+        "numOfThreads": "Antall tråder",
         "sizeOfHash": "Størrelse på hash",
         "editJSON": "Rediger JSON",
         "reset": "Tilbakestill til standard"

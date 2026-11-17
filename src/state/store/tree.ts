@@ -1,6 +1,6 @@
 import type { DrawShape } from "@lichess-org/chessground/draw";
-import { isNormal, type Move, makeUci, parseUci } from "chessops";
-import { INITIAL_FEN, makeFen } from "chessops/fen";
+import { type Move, makeUci, parseUci } from "chessops";
+import { makeFen } from "chessops/fen";
 import { makeSan, parseSan } from "chessops/san";
 import { type Draft, produce } from "immer";
 import { createStore, type StateCreator } from "zustand";
@@ -9,6 +9,7 @@ import type { BestMoves, Outcome, Score } from "@/bindings";
 import { ANNOTATION_INFO, type Annotation } from "@/utils/annotation";
 import { getPGN } from "@/utils/chess";
 import { parseSanOrUci, positionFromFen } from "@/utils/chessops";
+import { isFiftyMoveRule, isThreefoldRepetition } from "@/utils/drawRules";
 import { isPrefix } from "@/utils/misc";
 import { getAnnotation } from "@/utils/score";
 import { playSound } from "@/utils/sound";
@@ -27,6 +28,9 @@ export interface TreeStoreState extends TreeState {
     currentNode: () => TreeNode;
 
     goToNext: () => void;
+    /** Line of the Repertoire Review card being drilled; goToNext follows it and stops at its end. */
+    practicePath: number[] | null;
+    setPracticePath: (path: number[] | null) => void;
     goToPrevious: () => void;
     goToStart: () => void;
     goToEnd: () => void;
@@ -119,20 +123,25 @@ export const createTreeStore = (id?: string, initialTree?: TreeState) => {
                 }),
             ),
 
+        practicePath: null,
+        setPracticePath: (path) => set({ practicePath: path }),
+
         goToNext: () =>
             set((state) => {
+                const { practicePath } = state;
+                if (practicePath && state.position.length >= practicePath.length) return state;
+                const childIndex = practicePath ? practicePath[state.position.length] : 0;
+
                 const node = getNodeAtPath(state.root, state.position);
                 const [pos] = positionFromFen(node.fen);
-                if (!pos || !node.children[0]?.move) return state;
-                const san = makeSan(pos, node.children[0].move);
+                const move = node.children[childIndex]?.move;
+                if (!pos || !move) return state;
+                const san = makeSan(pos, move);
                 playSound(san.includes("x"), san.includes("+"));
-                if (node && node.children.length > 0) {
-                    return {
-                        ...state,
-                        position: [...state.position, 0],
-                    };
-                }
-                return state;
+                return {
+                    ...state,
+                    position: [...state.position, childIndex],
+                };
             }),
         goToPrevious: () => set((state) => ({ ...state, position: state.position.slice(0, -1) })),
 
@@ -560,7 +569,10 @@ function makeMove({
 
     const newFen = makeFen(pos.toSetup());
 
-    if ((changeHeaders && isThreeFoldRepetition(state, newFen)) || is50MoveRule(state)) {
+    if (
+        (changeHeaders && isThreefoldRepetition(fensAlongPath(state, position), newFen)) ||
+        isFiftyMoveRule(newFen)
+    ) {
         state.headers.result = "1/2-1/2";
     }
 
@@ -601,35 +613,14 @@ function makeMove({
     }
 }
 
-function isThreeFoldRepetition(state: TreeState, fen: string) {
+function fensAlongPath(state: TreeState, path: number[]): string[] {
     let node = state.root;
-    const fens = [INITIAL_FEN.split(" - ")[0]];
-    for (const i of state.position) {
+    const fens = [node.fen];
+    for (const i of path) {
         node = node.children[i];
-        fens.push(node.fen.split(" - ")[0]);
+        fens.push(node.fen);
     }
-    return fens.filter((f) => f === fen.split(" - ")[0]).length >= 2;
-}
-
-function is50MoveRule(state: TreeState) {
-    let node = state.root;
-    let count = 0;
-    for (const i of state.position) {
-        count += 1;
-        const [pos] = positionFromFen(node.fen);
-        if (!pos) return false;
-        if (
-            node.move &&
-            isNormal(node.move) &&
-            (node.move.promotion ||
-                node.san?.includes("x") ||
-                pos.board.get(node.move.from)?.role === "pawn")
-        ) {
-            count = 0;
-        }
-        node = node.children[i];
-    }
-    return count >= 100;
+    return fens;
 }
 
 function deleteMove(state: TreeState, path: number[]) {

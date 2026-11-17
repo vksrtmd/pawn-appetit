@@ -73,20 +73,24 @@ function BoardAnalysis() {
   const deleteMove = useStore(store, (s) => s.deleteMove);
 
   const saveFile = useCallback(async () => {
-    if (
-      currentTab?.source != null &&
-      currentTab?.source?.type === "file" &&
-      !isTempImportFile(currentTab?.source?.path)
-    ) {
-      saveTab(currentTab, store);
-      setStoreSave();
-    } else {
-      saveToFile({
-        dir: documentDir,
-        setCurrentTab,
-        tab: currentTab,
-        store,
-      });
+    try {
+      if (
+        currentTab?.source != null &&
+        currentTab?.source?.type === "file" &&
+        !isTempImportFile(currentTab?.source?.path)
+      ) {
+        await saveTab(currentTab, store);
+        setStoreSave();
+      } else {
+        await saveToFile({
+          dir: documentDir,
+          setCurrentTab,
+          tab: currentTab,
+          store,
+        });
+      }
+    } catch {
+      // The failed write was already reported; the tab stays dirty.
     }
   }, [setCurrentTab, currentTab, documentDir, store, setStoreSave]);
 
@@ -354,6 +358,10 @@ function BoardAnalysis() {
   const isPuzzle =
     currentTab?.source?.type === "file" && currentTab.source.metadata.type === "puzzle";
   const practicing = currentTabSelected === "practice" && practiceTabSelected === "train";
+  const setPracticePath = useStore(store, (s) => s.setPracticePath);
+  useEffect(() => {
+    if (!practicing) setPracticePath(null);
+  }, [practicing, setPracticePath]);
 
   const { layout } = useResponsiveLayout();
   const isMobileLayout = layout.chessBoard.layoutType === "mobile";
