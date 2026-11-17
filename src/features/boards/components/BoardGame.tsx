@@ -71,7 +71,7 @@ import { getMainLine, getMoveText, getPGN } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
 import type { TimeControlField } from "@/utils/clock";
 import { getDocumentDir } from "@/utils/documentDir";
-import type { LocalEngine } from "@/utils/engines";
+import { type LocalEngine, syncSelectedEngine } from "@/utils/engines";
 import { createFile } from "@/utils/files";
 import { deserializeStorageValue } from "@/utils/tabStateStorage";
 import { formatDateToPGN } from "@/utils/format";
@@ -108,9 +108,8 @@ function EnginesSelect({ engine, setEngine, engines = [], enginesState }: Engine
   const navigate = useNavigate();
 
   useEffect(() => {
-    if (engines.length > 0 && engine === null) {
-      setEngine(engines[0]);
-    }
+    const next = syncSelectedEngine(engines, engine);
+    if (next) setEngine(next);
   }, [engine, engines, setEngine]);
 
   const engineOptions = useMemo(() => {

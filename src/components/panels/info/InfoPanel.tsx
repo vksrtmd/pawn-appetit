@@ -109,12 +109,17 @@ function GameSelectorAccordion({
         },
         onConfirm: async () => {
           if (currentTab) {
-            saveToFile({
-              dir: documentDir,
-              setCurrentTab,
-              tab: currentTab,
-              store,
-            });
+            try {
+              await saveToFile({
+                dir: documentDir,
+                setCurrentTab,
+                tab: currentTab,
+                store,
+              });
+            } catch {
+              // The failed write was already reported; stay on this page so the edits survive.
+              return;
+            }
           }
           setPage(tempPage, true);
         },
