@@ -1247,7 +1247,7 @@ pub async fn search_position(
 
             // Thread-local accumulator structure
             #[derive(Default)]
-        struct ThreadLocalResults {
+            struct ThreadLocalResults {
                 position_stats: HashMap<String, PositionStats>,
                 matched_ids: TopGames,
             }
@@ -2395,7 +2395,14 @@ mod top_games_tests {
     fn keeps_the_highest_rated_games_not_the_first_ones() {
         let mut top = TopGames::with_capacity(3);
         // Ids ascend while ratings are mixed, so "first three" and "best three" differ.
-        for (id, rating) in [(1, 1500), (2, 1600), (3, 1700), (4, 2800), (5, 1000), (6, 2700)] {
+        for (id, rating) in [
+            (1, 1500),
+            (2, 1600),
+            (3, 1700),
+            (4, 2800),
+            (5, 1000),
+            (6, 2700),
+        ] {
             top.push(game(id, rating));
         }
         assert_eq!(ids(top), vec![3, 4, 6]);
