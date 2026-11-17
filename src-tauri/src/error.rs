@@ -119,6 +119,9 @@ pub enum Error {
     #[error("Engine initialization failed: {0}")]
     EngineInitFailed(String),
 
+    #[error("Analysis cancelled")]
+    AnalysisCancelled,
+
     #[error("Invalid square index: {0} (expected 0-63)")]
     InvalidSquareIndex(u8),
 

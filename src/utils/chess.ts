@@ -3,7 +3,7 @@ import { type Color, type Move, makeSquare, makeUci, type Role } from "chessops"
 import { type Chess, castlingSide, normalizeMove } from "chessops/chess";
 import { INITIAL_FEN, makeFen, parseFen } from "chessops/fen";
 import { isPawns, parseComment } from "chessops/pgn";
-import { makeSan, parseSan } from "chessops/san";
+import { makeSan } from "chessops/san";
 import { match } from "ts-pattern";
 import { commands, type Outcome, type Score, type Token } from "@/bindings";
 import { ANNOTATION_INFO, type Annotation, isBasicAnnotation, NAG_INFO } from "./annotation";
@@ -652,11 +652,12 @@ function innerParsePGN(
                 root.shapes.push(...shapes);
             }
 
-            if (comment.clock) {
+            if (comment.clock !== undefined) {
                 root.clock = comment.clock;
             }
 
-            root.comment = comment.text;
+            // Lichess/chess.com [%timestamp N] is not shown, like [%clk] and [%eval]
+            root.comment = comment.text.replace(/\s*\[%timestamp\s+\d+\]\s*/g, " ").trim();
             i++;
         } else if (token.type === "ParenOpen") {
             const variation = [];
@@ -725,7 +726,7 @@ function innerParsePGN(
             }
             // Parse the SAN (no longer support "*" as it's reserved for game result)
             const sanValue = token.value;
-            const move = parseSan(pos, sanValue);
+            const move = parseSanOrUci(pos, sanValue);
             if (!move) {
                 i++;
                 continue;

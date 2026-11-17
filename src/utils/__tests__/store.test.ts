@@ -1,9 +1,12 @@
 import { Chess, parseUci } from "chessops";
 import { makeFen } from "chessops/fen";
 import { parseSan } from "chessops/san";
-import { beforeEach, expect, test } from "vitest";
+import { beforeEach, expect, test, vi } from "vitest";
 import { createTreeStore } from "@/state/store/tree";
+import { playSound } from "@/utils/sound";
 import { createNode, defaultTree, type TreeState } from "@/utils/treeReducer";
+
+vi.mock("@/utils/sound", () => ({ playSound: vi.fn<() => void>() }));
 
 const store = createTreeStore();
 
@@ -248,6 +251,35 @@ test("should handle goToNext", () => {
         ...treeE4D5(),
         position: [0],
     });
+});
+
+function treeWithTwoReplies() {
+    const s = createTreeStore();
+    s.getState().makeMove({ payload: e4 });
+    s.getState().makeMove({ payload: d5 });
+    s.getState().goToMove([0]);
+    s.getState().makeMove({ payload: parseUci("e7e5")! });
+    return s;
+}
+
+test("goToNext follows the Repertoire Review line instead of the first child", () => {
+    const s = treeWithTwoReplies();
+    s.getState().goToMove([0]);
+    s.getState().setPracticePath([0, 1, 0]);
+    s.getState().goToNext();
+
+    expect(s.getState().position).toEqual([0, 1]);
+});
+
+test("goToNext stays put and stays silent at the end of the Repertoire Review line", () => {
+    const s = treeWithTwoReplies();
+    s.getState().goToMove([0]);
+    s.getState().setPracticePath([0]);
+    vi.mocked(playSound).mockClear();
+    s.getState().goToNext();
+
+    expect(s.getState().position).toEqual([0]);
+    expect(playSound).not.toHaveBeenCalled();
 });
 
 test("should handle goToPrevious", () => {
