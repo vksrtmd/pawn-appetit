@@ -236,7 +236,7 @@
         "searchSettings": "Configurações de pesquisa",
         "advancedSettings": "Configurações avançadas",
         "numOfLines": "Número de linhas",
-        "numOfCores": "Número de cores",
+        "numOfThreads": "Número de threads",
         "sizeOfHash": "Tamanho do hash",
         "editJSON": "Editar JSON",
         "reset": "Repor para padrão"
