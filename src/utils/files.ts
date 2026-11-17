@@ -30,6 +30,11 @@ export async function getFileNameWithoutExtension(filePath: string): Promise<str
     return fileNameWithExtension.replace(`.${extension}`, "");
 }
 
+/** Current time as whole epoch seconds, the unit the Files page and file index use. */
+export function nowEpochSeconds(): number {
+    return Math.floor(Date.now() / 1000);
+}
+
 export async function openFile(
     file: string,
     setTabs: React.Dispatch<React.SetStateAction<Tab[]>>,
@@ -63,7 +68,7 @@ export async function openFile(
         name: fileName,
         path: file,
         numGames: count,
-        lastModified: new Date().getUTCSeconds(),
+        lastModified: nowEpochSeconds(),
     };
 
     // Parse only the first game for session storage
@@ -128,7 +133,7 @@ export async function createFile({
         path: file,
         numGames,
         metadata,
-        lastModified: new Date().getUTCSeconds(),
+        lastModified: nowEpochSeconds(),
     });
 }
 
@@ -156,7 +161,7 @@ export async function createTempImportFile(pgn: string): Promise<FileMetadata> {
             type: "game",
             tags: [],
         },
-        lastModified: Date.now(),
+        lastModified: nowEpochSeconds(),
     };
 }
 

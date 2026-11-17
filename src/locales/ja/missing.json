@@ -610,7 +610,7 @@
   "features.engines.settings.searchSettings": "Search settings",
   "features.engines.settings.advancedSettings": "Advanced settings",
   "features.engines.settings.numOfLines": "Number of lines",
-  "features.engines.settings.numOfCores": "Number of cores",
+  "features.engines.settings.numOfThreads": "Number of threads",
   "features.engines.settings.sizeOfHash": "Size of Hash",
   "features.engines.settings.editJSON": "Edit JSON",
   "features.engines.settings.reset": "Reset to default",

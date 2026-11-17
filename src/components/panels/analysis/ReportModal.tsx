@@ -2,19 +2,20 @@ import { Button, Checkbox, Group, Modal, NumberInput, Select, Stack } from "@man
 import { useForm } from "@mantine/form";
 import { useAtom, useAtomValue } from "jotai";
 import { atomWithStorage } from "jotai/utils";
-import { memo, useContext, useEffect, useRef } from "react";
+import { memo, useContext, useEffect, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
-import { commands, type GoMode } from "@/bindings";
+import { commands } from "@/bindings";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { enginesAtom, referenceDbAtom } from "@/state/atoms";
 import type { LocalEngine } from "@/utils/engines";
 import { unwrap } from "@/utils/unwrap";
+import { defaultGoMode, type ReportGoMode, resolveReportEngine } from "./reportSettings";
 
 const reportSettingsAtom = atomWithStorage("report-settings", {
   novelty: true,
   reversed: true,
-  goMode: { t: "Time", c: 500 } as Exclude<GoMode, { t: "Infinite" }>,
+  goMode: defaultGoMode("Time") as ReportGoMode,
   engine: "",
 });
 
@@ -41,12 +42,15 @@ function ReportModal({
 
   const referenceDb = useAtomValue(referenceDbAtom);
   const engines = useAtomValue(enginesAtom);
-  const localEngines = engines.filter((e): e is LocalEngine => e.type === "local");
+  const localEngines = useMemo(
+    () => engines.filter((e): e is LocalEngine => e.type === "local"),
+    [engines],
+  );
   const store = useContext(TreeStateContext)!;
   const addAnalysis = useStore(store, (s) => s.addAnalysis);
 
   const [reportSettings, setReportSettings] = useAtom(reportSettingsAtom);
-  const analysisEngineRef = useRef<{ engine: string; tab: string } | null>(null);
+  const analysisIdRef = useRef<string | null>(null);
 
   const form = useForm({
     initialValues: reportSettings,
@@ -61,25 +65,21 @@ function ReportModal({
   });
 
   useEffect(() => {
-    const engine =
-      localEngines.length === 0
-        ? ""
-        : !reportSettings.engine || !localEngines.some((l) => l.path === reportSettings.engine)
-          ? localEngines[0].path
-          : reportSettings.engine;
+    const engine = resolveReportEngine(localEngines, reportSettings.engine);
 
     form.setValues({ ...reportSettings, engine });
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on engine count and settings; form and localEngines change identity every render
-  }, [localEngines.length, reportSettings]);
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- intentionally keyed on the engine list and settings; form changes identity every render
+  }, [localEngines, reportSettings]);
 
   const handleStop = async () => {
-    if (analysisEngineRef.current) {
+    if (analysisIdRef.current) {
+      const analysisId = analysisIdRef.current;
+      analysisIdRef.current = null;
       try {
-        await commands.stopEngine(analysisEngineRef.current.engine, analysisEngineRef.current.tab);
+        await commands.cancelAnalysis(analysisId);
       } catch (error) {
-        console.error("Error stopping engine:", error);
+        console.error("Error cancelling analysis:", error);
       }
-      analysisEngineRef.current = null;
       setInProgress(false);
     }
   };
@@ -99,7 +99,7 @@ function ReportModal({
     }
 
     const analysisId = `report_${tab}`;
-    analysisEngineRef.current = { engine: form.values.engine, tab: analysisId };
+    analysisIdRef.current = analysisId;
 
     commands
       .analyzeGame(
@@ -116,7 +116,7 @@ function ReportModal({
         engineSettings,
       )
       .then((analysis) => {
-        if (analysisEngineRef.current) {
+        if (analysisIdRef.current) {
           const analysisData = unwrap(analysis);
           addAnalysis(analysisData);
         }
@@ -125,7 +125,7 @@ function ReportModal({
         console.error("Analysis error:", error);
       })
       .finally(() => {
-        analysisEngineRef.current = null;
+        analysisIdRef.current = null;
         setInProgress(false);
       });
   }
@@ -167,9 +167,8 @@ function ReportModal({
               ]}
               value={form.values.goMode.t}
               onChange={(v) => {
-                const newGo = form.values.goMode;
-                newGo.t = v as "Depth" | "Time" | "Nodes";
-                form.setFieldValue("goMode", newGo);
+                if (v === form.values.goMode.t) return;
+                form.setFieldValue("goMode", defaultGoMode(v as ReportGoMode["t"]));
               }}
             />
             <NumberInput

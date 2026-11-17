@@ -838,7 +838,7 @@
         "searchSettings": "Search settings",
         "advancedSettings": "Advanced settings",
         "numOfLines": "Number of lines",
-        "numOfCores": "Number of cores",
+        "numOfThreads": "Number of threads",
         "sizeOfHash": "Size of Hash",
         "editJSON": "Edit JSON",
         "reset": "Reset to default"

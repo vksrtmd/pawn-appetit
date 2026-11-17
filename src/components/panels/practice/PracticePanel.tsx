@@ -50,6 +50,7 @@ function PracticePanel() {
   const position = useStore(store, (s) => s.position);
   const goToMove = useStore(store, (s) => s.goToMove);
   const goToNext = useStore(store, (s) => s.goToNext);
+  const setPracticePath = useStore(store, (s) => s.setPracticePath);
 
   const currentTab = useAtomValue(currentTabAtom);
 
@@ -98,6 +99,7 @@ function PracticePanel() {
     }
 
     const targetPosition = findFen(c.fen, root);
+    setPracticePath(targetPosition);
 
     // If animation is disabled, jump directly to the position without any animation
     if (practiceAnimationSpeed === "disabled") {
@@ -179,7 +181,15 @@ function PracticePanel() {
         setInvisible(true);
       }
     }, animationDelay);
-  }, [deck.positions, root, position, practiceAnimationSpeed, goToMove, setInvisible]);
+  }, [
+    deck.positions,
+    root,
+    position,
+    practiceAnimationSpeed,
+    goToMove,
+    setInvisible,
+    setPracticePath,
+  ]);
 
   // Auto-advance to next practice position after successful attempt
   const lastLogEntry = deck.logs[deck.logs.length - 1];
@@ -344,6 +354,7 @@ function PracticePanel() {
                     setIsAnimating(false);
                   }
                   setInvisible(false);
+                  setPracticePath(null);
                   goToNext();
                 }}
               >
@@ -512,7 +523,7 @@ function LogsModal({
                   <Text tt="uppercase" fw="bold" fz="sm">
                     Date
                   </Text>
-                  <Text>{formatDate(log.due)}</Text>
+                  <Text>{formatDate(log.review)}</Text>
                 </Stack>
                 <ActionIcon
                   variant="subtle"
