@@ -1,7 +1,7 @@
 import { parseSquare } from "chessops";
 import { parseFen } from "chessops/fen";
-import { expect, test } from "vitest";
-import { getCastlingSquare } from "@/utils/chessops";
+import { describe, expect, test } from "vitest";
+import { activeThreat, getCastlingSquare } from "@/utils/chessops";
 
 test("should get the correct castling square in the starting position", () => {
     const setup = parseFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1").unwrap();
@@ -41,4 +41,21 @@ test("should get the correct castling square in FRC 608", () => {
     expect(getCastlingSquare(setup, "w", "q")).toBe(parseSquare("a1"));
     expect(getCastlingSquare(setup, "b", "k")).toBe(parseSquare("e8"));
     expect(getCastlingSquare(setup, "b", "q")).toBe(parseSquare("a8"));
+});
+
+describe("activeThreat", () => {
+    const IN_CHECK = "rnb1kbnr/pppp1ppp/8/4p3/6Pq/5P2/PPPPP2P/RNBQKBNR w KQkq - 1 3";
+    const QUIET = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+
+    test("threat mode is off when the side to move is in check", () => {
+        expect(activeThreat(true, IN_CHECK)).toBe(false);
+    });
+
+    test("threat mode stays on when not in check", () => {
+        expect(activeThreat(true, QUIET)).toBe(true);
+    });
+
+    test("threat mode stays off when not requested", () => {
+        expect(activeThreat(false, QUIET)).toBe(false);
+    });
 });

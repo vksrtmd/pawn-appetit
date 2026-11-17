@@ -3,11 +3,13 @@ import { IconTrash, IconZoomCheck } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtom, useSetAtom } from "jotai";
 import { useTranslation } from "react-i18next";
-import { commands, type NormalizedGame } from "@/bindings";
+import { useQueryClient } from "@tanstack/react-query";
+import type { NormalizedGame } from "@/bindings";
 import CollapsibleGameInfo from "@/components/CollapsibleGameInfo";
 import { TreeStateProvider } from "@/components/TreeStateContext";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
+import { deleteGameAndRefresh } from "@/utils/db";
 import { createTab } from "@/utils/tabs";
 import GamePreview from "./GamePreview";
 
@@ -22,6 +24,7 @@ function GameCard({
 }) {
   const { t } = useTranslation();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { layout } = useResponsiveLayout();
 
   const [, setTabs] = useAtom(tabsAtom);
@@ -105,7 +108,7 @@ function GameCard({
                 color="red"
                 size={layout.databases.density === "compact" ? "lg" : "md"}
                 onClick={() => {
-                  commands.deleteDbGame(file, game.id).then(() => mutate());
+                  deleteGameAndRefresh(queryClient, file, game.id).then(() => mutate());
                 }}
               >
                 <IconTrash

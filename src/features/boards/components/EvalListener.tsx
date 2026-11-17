@@ -18,7 +18,7 @@ import {
 } from "@/state/atoms";
 import { getVariationLine } from "@/utils/chess";
 import { getBestMoves as chessdbGetBestMoves } from "@/utils/chessdb/api";
-import { positionFromFen, swapMove } from "@/utils/chessops";
+import { activeThreat, positionFromFen, swapMove } from "@/utils/chessops";
 import {
   type Engine,
   type LocalEngine,
@@ -27,13 +27,14 @@ import {
 } from "@/utils/engines";
 import { getBestMoves as lichessGetBestMoves } from "@/utils/lichess/api";
 import { useThrottledEffect } from "@/utils/misc";
+import { applyEngineUpdate } from "./engineUpdate";
 
 /** Engines that may be started by the analysis listener: unloaded ones must stay stopped. */
 export const listenableEngines = (engines: Engine[]) => engines.filter((e) => e.loaded);
 
 function EvalListener() {
   const loadableEngines = useAtomValue(loadableEnginesAtom);
-  const threat = useAtomValue(currentThreatAtom);
+  const threatRequested = useAtomValue(currentThreatAtom);
   const store = useContext(TreeStateContext)!;
   const is960 = useStore(store, (s) => s.headers.variant === "Chess960");
   const fen = useStore(store, (s) => s.root.fen);
@@ -57,10 +58,11 @@ function EvalListener() {
 
   const isGameOver = pos?.isEnd() ?? false;
   const finalFen = useMemo(() => (pos ? makeFen(pos.toSetup()) : null), [pos]);
+  const threat = activeThreat(threatRequested as boolean, finalFen || INITIAL_FEN);
 
   const { searchingFen, searchingMoves } = useMemo(
     () =>
-      match(threat as boolean)
+      match(threat)
         .with(true, () => ({
           searchingFen: swapMove(finalFen || INITIAL_FEN),
           searchingMoves: [],
@@ -153,18 +155,23 @@ function EngineListener({
           !isGameOver
         ) {
           startTransition(() => {
-            setEngineVariation((prev) => {
-              const newMap = new Map(prev);
-              newMap.set(`${searchingFen}:${searchingMoves.join(",")}`, ev);
-              if (threat) {
-                newMap.delete(`${fen}:${moves.join(",")}`);
-              } else if (finalFen) {
-                newMap.delete(`${swapMove(finalFen)}:`);
-              }
-              return newMap;
+            applyEngineUpdate({
+              progress: payload.progress,
+              lines: ev,
+              setProgress,
+              setScore,
+              setLines: (lines) =>
+                setEngineVariation((prev) => {
+                  const newMap = new Map(prev);
+                  newMap.set(`${searchingFen}:${searchingMoves.join(",")}`, lines);
+                  if (threat) {
+                    newMap.delete(`${fen}:${moves.join(",")}`);
+                  } else if (finalFen) {
+                    newMap.delete(`${swapMove(finalFen)}:`);
+                  }
+                  return newMap;
+                }),
             });
-            setProgress(payload.progress);
-            setScore(ev[0].score);
           });
         }
       });

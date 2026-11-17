@@ -33,6 +33,13 @@ export function positionFromFen(fen: string): [Chess, null] | [null, FenError | 
     );
 }
 
+/** Threat mode swaps the side to move, which is an illegal position while in check. */
+export function activeThreat(threat: boolean, fen: string): boolean {
+    if (!threat) return false;
+    const [pos] = positionFromFen(fen);
+    return !pos?.isCheck();
+}
+
 export function swapMove(fen: string, color?: Color) {
     const setup = parseFen(fen).unwrap();
     if (color) {
