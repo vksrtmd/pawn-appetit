@@ -199,6 +199,11 @@ export function useDefaultDatabases(opened: boolean) {
     };
 }
 
+/** A downloaded database is saved as `<title>.db3`, whatever title the file holds inside. */
+export function isDefaultDatabaseInstalled(databases: DatabaseInfo[], title: string) {
+    return databases.some((db) => db.type === "success" && db.filename === `${title}.db3`);
+}
+
 export async function getDefaultPuzzleDatabases(): Promise<
     (PuzzleDatabaseInfo & { downloadLink: string })[]
 > {
