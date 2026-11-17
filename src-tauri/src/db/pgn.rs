@@ -438,6 +438,30 @@ mod test {
     }
 
     #[test]
+    fn test_account_download_ends_without_empty_games() {
+        // Shaped like a Lichess/Chess.com download: games separated by blank
+        // lines, ending in blank lines and, for an interrupted download, a
+        // header-only game.
+        let complete = "[Event \"Rated Blitz game\"]\n[Site \"https://lichess.org/abcd1234\"]\n[White \"alice\"]\n[Black \"bob\"]\n[Result \"1-0\"]\n\n1. e4 e5 1-0\n\n\n";
+        let cases = [
+            ("trailing blank lines", format!("{complete}\n\n")),
+            ("two months joined", format!("{complete}\n{complete}")),
+        ];
+        for (name, pgn) in cases {
+            let mut importer = Importer::new(None);
+            let games: Vec<_> = BufferedReader::new_cursor(pgn.as_bytes())
+                .into_iter(&mut importer)
+                .flatten()
+                .flatten()
+                .collect();
+            assert!(
+                games.iter().all(|g| g.tree.count_main_line_moves() > 0),
+                "{name}: found an empty game"
+            );
+        }
+    }
+
+    #[test]
     fn test_count_main_line_moves() {
         // Test 1: Empty game tree
         let empty_tree = GameTree::new();
