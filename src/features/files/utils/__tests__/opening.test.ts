@@ -5,6 +5,7 @@ import type { TreeNode } from "@/utils/treeReducer";
 import {
     buildFromTree,
     getCardForReview,
+    isAwaitingMove,
     type Position,
     positionSchema,
     updateCardPerformance,
@@ -200,5 +201,21 @@ describe("stored Cards", () => {
         answer(stored, 0, 3);
         expect(new Date(stored.data.positions[0].card.due).getTime()).toBeGreaterThan(due);
         expect(stored.data.positions[0].card.reps).toBe(2);
+    });
+});
+
+describe("isAwaitingMove", () => {
+    const positions = [{ fen: "a" }, { fen: "b" }] as Position[];
+
+    test("is true on a reviewed position while the answer is hidden", () => {
+        expect(isAwaitingMove(positions, "a", true)).toBe(true);
+    });
+
+    test("is false once the answer is revealed", () => {
+        expect(isAwaitingMove(positions, "a", false)).toBe(false);
+    });
+
+    test("is false off the reviewed positions, after the move is played", () => {
+        expect(isAwaitingMove(positions, "c", true)).toBe(false);
     });
 });

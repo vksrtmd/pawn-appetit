@@ -570,7 +570,7 @@
         "searchSettings": "搜索设置",
         "advancedSettings": "高级设置",
         "numOfLines": "分支数量",
-        "numOfCores": "CPU 核心数量",
+        "numOfThreads": "线程数",
         "sizeOfHash": "Hash 大小",
         "editJSON": "编辑 JSON",
         "reset": "重置为默认",

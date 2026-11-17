@@ -17,6 +17,7 @@ import { getGameStats, getMainLine, getPGN } from "@/utils/chess";
 import { updateGameRecord } from "@/utils/gameRecords";
 import { label } from "./AnalysisPanel.css";
 import ReportModal from "./ReportModal";
+import { shouldShowAccuracy } from "./reportSettings";
 
 function ReportPanel() {
   const { t } = useTranslation();
@@ -232,7 +233,7 @@ function ReportPanel() {
       </Suspense>
       <Stack mb="lg" gap="0.4rem" mr="xs">
         <Group grow style={{ textAlign: "center" }}>
-          {stats.whiteAccuracy && stats.blackAccuracy && (
+          {shouldShowAccuracy(stats) && (
             <>
               <AccuracyCard
                 color={t("chess.white")}
