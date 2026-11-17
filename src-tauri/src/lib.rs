@@ -29,7 +29,7 @@ use oauth::AuthState;
 #[cfg(all(debug_assertions, not(target_os = "android")))]
 use specta_typescript::{BigIntExportBehavior, Typescript};
 use sysinfo::{RefreshKind, SystemExt};
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 
 use crate::chess::{
     analyze_game, cancel_analysis, get_best_moves, get_engine_config, get_engine_logs, kill_engine,
@@ -101,6 +101,19 @@ pub struct AppState {
     engine_processes: DashMap<(String, String), Arc<tokio::sync::Mutex<EngineProcess>>>,
     analysis_cancel: AnalysisCancelRegistry,
     auth: AuthState,
+}
+
+impl AppState {
+    /// Kill every registered engine child process without awaiting, so it is usable from
+    /// the synchronous app-exit hook. Engines whose lock is held are still killed on drop
+    /// (`kill_on_drop`).
+    fn kill_all_engines(&self) {
+        for entry in self.engine_processes.iter() {
+            if let Ok(mut process) = entry.value().try_lock() {
+                let _ = process.child.start_kill();
+            }
+        }
+    }
 }
 
 // ============================================================================
@@ -198,8 +211,13 @@ pub async fn run() {
 
     builder
         .setup(move |app| app::setup::setup_tauri_app(app, &specta_builder))
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                app.state::<AppState>().kill_all_engines();
+            }
+        });
 }
 
 // ============================================================================
@@ -281,5 +299,46 @@ mod tests {
         assert!(!is_supported_external_url("https://example.com"));
         assert!(!is_supported_external_url("file:///tmp/game.pgn"));
         assert!(!is_supported_external_url("not-a-url"));
+    }
+}
+
+#[cfg(all(test, unix))]
+mod engine_exit_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    /// A stand-in engine that answers the handshake and then ignores stdin EOF, like an
+    /// engine that would outlive the app.
+    async fn spawn_stubborn_engine(dir: &std::path::Path) -> EngineProcess {
+        let path = dir.join("engine.sh");
+        std::fs::write(
+            &path,
+            "#!/bin/sh\nwhile read l; do\n case \"$l\" in uci) echo uciok;; isready) echo readyok;; esac\ndone\nexec sleep 60\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        EngineProcess::new(path).await.unwrap().0
+    }
+
+    #[tokio::test]
+    async fn kill_all_engines_terminates_every_registered_engine_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = AppState::default();
+        for tab in ["a", "b"] {
+            let process = spawn_stubborn_engine(dir.path()).await;
+            state.engine_processes.insert(
+                (tab.to_string(), "engine".to_string()),
+                Arc::new(tokio::sync::Mutex::new(process)),
+            );
+        }
+
+        state.kill_all_engines();
+
+        for entry in state.engine_processes.iter() {
+            let mut process = entry.value().try_lock().unwrap();
+            let status =
+                tokio::time::timeout(std::time::Duration::from_secs(5), process.child.wait()).await;
+            assert!(status.is_ok(), "engine process still running");
+        }
     }
 }

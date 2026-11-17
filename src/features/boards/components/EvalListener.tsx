@@ -29,6 +29,9 @@ import { getBestMoves as lichessGetBestMoves } from "@/utils/lichess/api";
 import { useThrottledEffect } from "@/utils/misc";
 import { applyEngineUpdate } from "./engineUpdate";
 
+/** Engines that may be started by the analysis listener: unloaded ones must stay stopped. */
+export const listenableEngines = (engines: Engine[]) => engines.filter((e) => e.loaded);
+
 function EvalListener() {
   const loadableEngines = useAtomValue(loadableEnginesAtom);
   const threatRequested = useAtomValue(currentThreatAtom);
@@ -73,7 +76,7 @@ function EvalListener() {
   );
 
   if (loadableEngines.state === "hasData") {
-    return loadableEngines?.data?.map((e) => (
+    return listenableEngines(loadableEngines.data ?? []).map((e) => (
       <EngineListener
         key={e.name}
         engine={e}
@@ -129,6 +132,13 @@ function EngineListener({
       defaultGo: engine.go ?? undefined,
       tab: activeTab!,
     }),
+  );
+  // Unloading an engine unmounts its listener: stop the search it left running.
+  useEffect(
+    () => () => {
+      if (engine.type === "local") stopEngine(engine, activeTab!);
+    },
+    [engine, activeTab],
   );
   const searchingMovesKey = JSON.stringify(searchingMoves);
   useEffect(
