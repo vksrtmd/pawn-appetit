@@ -22,7 +22,7 @@ export function normalizeTiptapMarkdown(comment: string) {
 // <u> is added back because the editor's underline becomes <u>.
 export const commentSanitizeSchema: SanitizeSchema = {
     ...defaultSchema,
-    tagNames: [...(defaultSchema.tagNames ?? []), "u"],
+    tagNames: [...(defaultSchema.tagNames ?? []).filter((t) => t !== "img"), "u"],
 };
 
 export const commentRehypePlugins: NonNullable<MarkdownOptions["rehypePlugins"]> = [

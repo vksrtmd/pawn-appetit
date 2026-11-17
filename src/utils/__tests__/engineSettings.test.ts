@@ -1,6 +1,9 @@
 import { describe, expect, test } from "vitest";
 import {
+    ENGINES,
+    engineSchema,
     type LocalEngine,
+    packageInstallArgs,
     joinSyzygyPaths,
     syncSelectedEngine,
     threadOptions,
@@ -48,5 +51,32 @@ describe("joinSyzygyPaths", () => {
         expect(joinSyzygyPaths(["C:\\a", "C:\\b"], "windows")).toBe("C:\\a;C:\\b");
         expect(joinSyzygyPaths(["/a", "/b"], "linux")).toBe("/a:/b");
         expect(joinSyzygyPaths(["/a"], "macos")).toBe("/a");
+    });
+});
+
+describe("package installs", () => {
+    const linuxLc0 = ENGINES.filter(
+        (e) => e.os === "linux" && e.name === "Leela Chess Zero" && e.installMethod === "package",
+    );
+
+    test("the Linux lc0 cards install with manager apt and package lc0", () => {
+        expect(linuxLc0.length).toBeGreaterThan(0);
+        for (const e of linuxLc0) expect(packageInstallArgs(e)).toEqual(["apt", "lc0"]);
+    });
+
+    test("an engine without a manager or package name cannot be installed", () => {
+        expect(() => packageInstallArgs({ packageManager: "apt" })).toThrow();
+        expect(() => packageInstallArgs({ packageName: "lc0" })).toThrow();
+    });
+
+    test("an engine stored with the old packageCommand field still parses", () => {
+        const stored = {
+            type: "local",
+            name: "Leela",
+            version: "0.30.0",
+            path: "/usr/bin/lc0",
+            packageCommand: "sudo apt-get install lc0",
+        };
+        expect(engineSchema.safeParse(stored).success).toBe(true);
     });
 });

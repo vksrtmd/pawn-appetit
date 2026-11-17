@@ -1,6 +1,9 @@
+import { notifications } from "@mantine/notifications";
+import { IconX } from "@tabler/icons-react";
 import { listen } from "@tauri-apps/api/event";
 import { useAtom } from "jotai";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import type { DatabaseInfo } from "@/bindings";
 import { commands } from "@/bindings";
 import type { SortState } from "@/components/GenericHeader";
@@ -29,7 +32,7 @@ function Accounts({
   isLoading?: boolean;
 }) {
   const [, setSessions] = useAtom(sessionsAtom);
-  const isListening = useRef(false);
+  const { t } = useTranslation();
   const [databases, setDatabases] = useState<DatabaseInfo[]>([]);
   useEffect(() => {
     getDatabases().then((dbs) => setDatabases(dbs));
@@ -98,26 +101,41 @@ function Accounts({
     [addLichessSession],
   );
 
+  const showLoginError = useCallback(
+    (message: string) => {
+      sessionStorage.removeItem("lichess_player_alias");
+      notifications.show({ title: t("common.error"), message, color: "red", icon: <IconX /> });
+    },
+    [t],
+  );
+
   async function addLichess(player: string, username: string, withLogin: boolean) {
     if (withLogin) {
       sessionStorage.setItem("lichess_player_alias", player);
-      return await commands.authenticate(username);
+      const result = await commands.authenticate(username);
+      if (result.status === "error") showLoginError(result.error);
+      return;
     }
     return await addLichessNoLogin(player, username);
   }
 
   useEffect(() => {
-    async function listen_for_code() {
-      if (isListening.current) return;
-      isListening.current = true;
-      await listen<string>("access_token", async (event) => {
-        const token = event.payload;
-        await onLichessAuthentication(token);
+    const unlisteners: Array<() => void> = [];
+    let cancelled = false;
+    const add = (p: Promise<() => void>) =>
+      p.then((un) => {
+        if (cancelled) un();
+        else unlisteners.push(un);
       });
-    }
 
-    listen_for_code();
-  }, [onLichessAuthentication]);
+    add(listen<string>("access_token", (event) => onLichessAuthentication(event.payload)));
+    add(listen<string>("oauth_error", (event) => showLoginError(event.payload)));
+
+    return () => {
+      cancelled = true;
+      for (const un of unlisteners) un();
+    };
+  }, [onLichessAuthentication, showLoginError]);
 
   return (
     <>

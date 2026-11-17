@@ -93,3 +93,8 @@ test("formatting the comment editor produces survives sanitizing", () => {
   );
   expect(markdown("- a\n- b")).toContain("<ul>");
 });
+
+test("remote images in comments are not rendered", () => {
+  expect(markdown('<img src="https://example.com/x.png">')).not.toContain("<img");
+  expect(markdown("![x](https://example.com/x.png)")).not.toContain("<img");
+});

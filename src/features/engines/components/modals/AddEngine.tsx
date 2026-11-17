@@ -25,6 +25,7 @@ import ProgressButton from "@/components/ProgressButton";
 import { enginesAtom } from "@/state/atoms";
 import {
   type LocalEngine,
+  packageInstallArgs,
   type RemoteEngine,
   requiredEngineSettings,
   useDefaultEngines,
@@ -225,15 +226,7 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
           }
           enginePath = engine.path;
         } else if (engine.installMethod === "package") {
-          const packageCommand = engine.packageCommand;
-          if (!packageCommand) throw new Error("Package command not found");
-
-          const [manager, ...args] = packageCommand.split(" ");
-          const packageName = args[args.length - 1];
-
-          const result = unwrap(
-            await commands.installPackage(manager.replace("sudo", "").trim(), packageName),
-          );
+          const result = unwrap(await commands.installPackage(...packageInstallArgs(engine)));
           if (!result.success) {
             throw new Error(`Package installation failed: ${result.stderr}`);
           }
@@ -298,7 +291,9 @@ function EngineCard({ engine, engineId }: { engine: LocalEngine; engineId: numbe
       case "brew":
         return `brew install ${engine.brewPackage}`;
       case "package":
-        return engine.packageCommand || "Install via package manager";
+        return engine.packageName
+          ? `${engine.packageManager} install ${engine.packageName}`
+          : "Install via package manager";
       default:
         return t("units.bytes", { bytes: engine.downloadSize ?? 0 });
     }
