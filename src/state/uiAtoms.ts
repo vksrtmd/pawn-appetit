@@ -3,8 +3,9 @@
  * helper that maps a per-tab atom family to the currently active tab.
  */
 import { atom, type PrimitiveAtom } from "jotai";
-import { atomFamily, atomWithStorage, createJSONStorage } from "jotai/utils";
-import type { AtomFamily } from "jotai/vanilla/utils/atomFamily";
+import { atomWithStorage, createJSONStorage } from "jotai/utils";
+import { atomFamily } from "jotai-family";
+import type { AtomFamily } from "jotai-family";
 import type { SetStateAction } from "react";
 import type { LocalOptions } from "@/components/panels/database/DatabasePanel";
 import { genID, type Tab, tabSchema } from "@/utils/tabs";
