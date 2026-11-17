@@ -1,5 +1,13 @@
 import type { DrawShape } from "@lichess-org/chessground/draw";
-import { type Color, type Move, makeSquare, makeUci, type Role } from "chessops";
+import {
+    type Color,
+    type Move,
+    makeSquare,
+    makeUci,
+    parseSquare,
+    type Role,
+    type Square,
+} from "chessops";
 import { type Chess, castlingSide, normalizeMove } from "chessops/chess";
 import { INITIAL_FEN, makeFen, parseFen } from "chessops/fen";
 import { isPawns, parseComment } from "chessops/pgn";
@@ -212,7 +220,9 @@ export function getVariationLine(
         return [];
     }
     for (const pos of position) {
-        node = node.children[pos];
+        const child = node.children[pos];
+        if (!child) break;
+        node = child;
         if (node.move) {
             moves.push(uciNormalize(chess, node.move, chess960));
             chess.play(node.move);
@@ -464,16 +474,24 @@ function getVariationPGN(
     return pgn.trim();
 }
 
+// The square a move lands on, as shown on the board. chessops records castling
+// as the king moving onto its rook, so castling (with or without a check or
+// mate suffix) is mapped to the king's destination instead.
+export function getMoveDestination(
+    node: Pick<TreeNode, "san" | "halfMoves" | "move">,
+): Square | undefined {
+    const san = node.san?.replace(/[+#]+$/, "");
+    if (san === "O-O") return parseSquare(node.halfMoves % 2 === 1 ? "g1" : "g8");
+    if (san === "O-O-O") return parseSquare(node.halfMoves % 2 === 1 ? "c1" : "c8");
+    return node.move?.to;
+}
+
 export function parseKeyboardMove(san: string, fen: string) {
     function cleanSan(san: string) {
-        if (san.length > 2) {
-            const cleanedSan = san
-                .replace(/^([kqbnr])/i, (_, match) => match.toUpperCase())
-                .replace("o-o-o", "O-O-O")
-                .replace("o-o", "O-O");
-            return cleanedSan;
-        }
-        return san;
+        // Castling: O, o or 0, with optional hyphens.
+        if (/^[oO0]-?[oO0]-?[oO0]$/.test(san)) return "O-O-O";
+        if (/^[oO0]-?[oO0]$/.test(san)) return "O-O";
+        return san.replace(/^([kqbnr])/i, (_, match) => match.toUpperCase());
     }
 
     const [pos] = positionFromFen(fen);
