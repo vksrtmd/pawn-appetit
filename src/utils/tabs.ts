@@ -5,7 +5,12 @@ import { commands } from "@/bindings";
 import { fileMetadataSchema, invalidateFileIndex } from "@/features/files/utils/file";
 import { serializeStorageValue } from "./tabStateStorage";
 import type { TreeStoreState } from "@/state/store/tree";
-import { createFile, getFileNameWithoutExtension, isTempImportFile } from "@/utils/files";
+import {
+    createFile,
+    getFileNameWithoutExtension,
+    isTempImportFile,
+    nowEpochSeconds,
+} from "@/utils/files";
 import { unwrap } from "@/utils/unwrap";
 import { getPGN, parsePGN } from "./chess";
 import { formatDateToPGN } from "./format";
@@ -199,7 +204,7 @@ export async function saveToFile({
                     }),
                     name: fileName,
                     path: filePath,
-                    lastModified: Date.now(),
+                    lastModified: nowEpochSeconds(),
                 },
             };
         });
