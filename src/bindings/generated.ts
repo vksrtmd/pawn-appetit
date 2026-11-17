@@ -724,7 +724,7 @@ export type PlayerSort = "id" | "name" | "elo"
 /**
  * Player time controls for GoMode::PlayersTime.
  */
-export type PlayersTime = { white: number; black: number; winc: number; binc: number }
+export type PlayersTime = { white: number | null; black: number | null; winc: number; binc: number }
 export type PositionQueryJs = { fen: string; type_: string; 
 /**
  * Partial only: square indices (0 = a1 … 63 = h8) that must be empty.

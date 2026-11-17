@@ -217,23 +217,7 @@ impl EngineProcess {
     /// Start engine search with the given mode (depth, time, etc).
     pub async fn go(&mut self, mode: &GoMode) -> Result<(), Error> {
         self.go_mode = mode.clone();
-        let msg = match mode {
-            GoMode::Depth(depth) => format!("go depth {}\n", depth),
-            GoMode::Time(time) => format!("go movetime {}\n", time),
-            GoMode::Nodes(nodes) => format!("go nodes {}\n", nodes),
-            GoMode::PlayersTime(super::types::PlayersTime {
-                white,
-                black,
-                winc,
-                binc,
-            }) => {
-                format!(
-                    "go wtime {} btime {} winc {} binc {} movetime 1000\n",
-                    white, black, winc, binc
-                )
-            }
-            GoMode::Infinite => "go infinite\n".to_string(),
-        };
+        let msg = go_command(mode);
         self.lifecycle.start_search();
         if let Err(e) = self.stdin.write_all(msg.as_bytes()).await {
             self.lifecycle.mark_failed(e.to_string());
@@ -401,4 +385,64 @@ pub fn parse_uci_attrs(
     }
 
     Ok(best_moves)
+}
+
+/// The UCI `go` line for a search mode. A side without a clock gets no `wtime`/`btime`.
+fn go_command(mode: &GoMode) -> String {
+    match mode {
+        GoMode::Depth(depth) => format!("go depth {}\n", depth),
+        GoMode::Time(time) => format!("go movetime {}\n", time),
+        GoMode::Nodes(nodes) => format!("go nodes {}\n", nodes),
+        GoMode::PlayersTime(super::types::PlayersTime {
+            white,
+            black,
+            winc,
+            binc,
+        }) => {
+            let mut msg = "go".to_string();
+            if let Some(white) = white {
+                msg.push_str(&format!(" wtime {white} winc {winc}"));
+            }
+            if let Some(black) = black {
+                msg.push_str(&format!(" btime {black} binc {binc}"));
+            }
+            msg.push_str(" movetime 1000\n");
+            msg
+        }
+        GoMode::Infinite => "go infinite\n".to_string(),
+    }
+}
+
+#[cfg(test)]
+mod go_command_tests {
+    use super::*;
+    use crate::chess::types::PlayersTime;
+
+    #[test]
+    fn omits_the_time_of_a_side_without_a_clock() {
+        let mode = GoMode::PlayersTime(PlayersTime {
+            white: None,
+            black: Some(59000),
+            winc: 0,
+            binc: 1000,
+        });
+        assert_eq!(
+            go_command(&mode),
+            "go btime 59000 binc 1000 movetime 1000\n"
+        );
+    }
+
+    #[test]
+    fn sends_both_clocks_when_both_sides_have_one() {
+        let mode = GoMode::PlayersTime(PlayersTime {
+            white: Some(1),
+            black: Some(2),
+            winc: 3,
+            binc: 4,
+        });
+        assert_eq!(
+            go_command(&mode),
+            "go wtime 1 winc 3 btime 2 binc 4 movetime 1000\n"
+        );
+    }
 }

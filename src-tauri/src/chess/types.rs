@@ -48,8 +48,8 @@ pub enum GoMode {
 /// Player time controls for GoMode::PlayersTime.
 #[derive(Deserialize, Debug, Clone, Type, PartialEq, Eq)]
 pub struct PlayersTime {
-    pub white: u32,
-    pub black: u32,
+    pub white: Option<u32>,
+    pub black: Option<u32>,
     pub winc: u32,
     pub binc: u32,
 }
