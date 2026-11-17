@@ -85,7 +85,7 @@ globalStyle("cg-board square.selected", {
 });
 
 globalStyle("cg-board square.move-dest", {
-    background: "radial-gradient(rgba(0, 0, 0, 0.3) 25%, rgba(0, 0, 0, 0) 0)",
+    background: "radial-gradient(rgba(0, 0, 0, 0.3) 25%, rgba(0, 0, 0, 0) calc(25% + 1px))",
 });
 
 globalStyle("cg-board square.move-dest:hover", {
