@@ -434,9 +434,9 @@ export async function downloadLichess(
   _setProgress: (progress: number) => void,
   token?: string,
 ) {
-  let url = `${baseURL}/games/user/${player}`;
+  let url = `${baseURL}/games/user/${player}?sort=dateAsc`;
   if (timestamp) {
-    url += `?since=${timestamp}`;
+    url += `&since=${timestamp}`;
   }
   const path = await resolve(await appDataDir(), "db", `${player}_lichess.pgn`);
 
