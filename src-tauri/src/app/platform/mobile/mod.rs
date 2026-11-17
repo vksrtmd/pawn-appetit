@@ -6,8 +6,7 @@ pub mod ios;
 pub fn setup_mobile_plugins(builder: tauri::Builder<tauri::Wry>) -> tauri::Builder<tauri::Wry> {
     builder
         // Partial support plugins with limited mobile functionality
-        // Note: shell, opener, and process plugins have limited functionality on mobile
-        .plugin(tauri_plugin_shell::init())
+        // Note: opener and process plugins have limited functionality on mobile
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_process::init())
 }

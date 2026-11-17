@@ -4,13 +4,14 @@ use oauth2::{
     basic::BasicClient, reqwest::async_http_client, AuthUrl, AuthorizationCode, ClientId,
     CsrfToken, PkceCodeChallenge, PkceCodeVerifier, RedirectUrl, Scope, TokenResponse, TokenUrl,
 };
-use serde::Deserialize;
 use std::{
+    collections::HashMap,
     net::{SocketAddr, TcpListener},
-    sync::Arc,
+    sync::Mutex,
 };
 use tauri::{Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
+use tokio::sync::oneshot;
 
 use crate::{error::Error, AppState};
 
@@ -23,36 +24,60 @@ fn create_client(redirect_url: RedirectUrl) -> BasicClient {
         .set_redirect_uri(redirect_url)
 }
 
-fn get_available_addr() -> SocketAddr {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-    let addr = listener.local_addr().unwrap();
-    drop(listener);
-
-    addr
+/// One login attempt: the CSRF state and PKCE verifier are never reused across attempts.
+struct Attempt {
+    csrf_token: CsrfToken,
+    pkce_challenge: PkceCodeChallenge,
+    pkce_verifier: PkceCodeVerifier,
+    client: BasicClient,
 }
 
-#[derive(Clone)]
-pub struct AuthState {
-    pub csrf_token: CsrfToken,
-    pub pkce: Arc<(PkceCodeChallenge, String)>,
-    pub client: Arc<BasicClient>,
-    pub socket_addr: SocketAddr,
-}
-
-impl Default for AuthState {
-    fn default() -> Self {
-        let (pkce_code_challenge, pkce_code_verifier) = PkceCodeChallenge::new_random_sha256();
-        let socket_addr = get_available_addr();
-        let redirect_url = format!("http://{socket_addr}/callback");
-        AuthState {
+impl Attempt {
+    fn new(addr: SocketAddr) -> Self {
+        let (pkce_challenge, pkce_verifier) = PkceCodeChallenge::new_random_sha256();
+        let redirect_url = RedirectUrl::new(format!("http://{addr}/callback"))
+            .expect("loopback redirect url is valid");
+        Attempt {
             csrf_token: CsrfToken::new_random(),
-            pkce: Arc::new((
-                pkce_code_challenge,
-                PkceCodeVerifier::secret(&pkce_code_verifier).to_string(),
-            )),
-            client: Arc::new(create_client(RedirectUrl::new(redirect_url).unwrap())),
-            socket_addr,
+            pkce_challenge,
+            pkce_verifier,
+            client: create_client(redirect_url),
         }
+    }
+}
+
+struct Pending {
+    attempt: Attempt,
+    /// Stops the callback server; dropping it (a newer attempt replaced this one) stops it too.
+    shutdown: oneshot::Sender<()>,
+}
+
+#[derive(Default)]
+pub struct AuthState {
+    pending: Mutex<Option<Pending>>,
+}
+
+/// Returns the authorization code, or the message to show the user.
+fn parse_callback(query: &HashMap<String, String>, expected_csrf: &str) -> Result<String, String> {
+    if let Some(error) = query.get("error") {
+        return Err(match error.as_str() {
+            "access_denied" => "Login was cancelled".to_string(),
+            other => format!("Login failed: {other}"),
+        });
+    }
+    if query.get("state").map(String::as_str) != Some(expected_csrf) {
+        return Err("Login failed: state mismatch".to_string());
+    }
+    query
+        .get("code")
+        .cloned()
+        .ok_or_else(|| "Login failed: no authorization code received".to_string())
+}
+
+fn emit_error(app: &tauri::AppHandle, message: String) {
+    log::warn!("OAuth error: {message}");
+    if let Err(e) = app.emit("oauth_error", message) {
+        log::error!("Failed to emit oauth_error: {}", e);
     }
 }
 
@@ -64,65 +89,128 @@ pub async fn authenticate(
     app: tauri::AppHandle,
 ) -> Result<(), Error> {
     info!("Authenticating user {}", username);
-    let (auth_url, _) = state
-        .auth
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let attempt = Attempt::new(listener.local_addr()?);
+    let (auth_url, _) = attempt
         .client
-        .authorize_url(|| state.auth.csrf_token.clone())
+        .authorize_url(|| attempt.csrf_token.clone())
         .add_scope(Scope::new("preference:read".to_string()))
         .add_extra_param("username", username)
-        .set_pkce_challenge(state.auth.pkce.0.clone())
+        .set_pkce_challenge(attempt.pkce_challenge.clone())
         .url();
-    app.opener().open_url(auth_url, None::<String>)?;
-    let _server_handle = tauri::async_runtime::spawn(async move { run_server(app).await });
-    Ok(())
-}
 
-#[derive(Deserialize)]
-struct CallbackQuery {
-    code: AuthorizationCode,
-    state: CsrfToken,
+    let (shutdown, shutdown_rx) = oneshot::channel();
+    *state.auth.pending.lock().unwrap() = Some(Pending { attempt, shutdown });
+
+    let server_app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = run_server(server_app.clone(), listener, shutdown_rx).await {
+            emit_error(&server_app, format!("Login failed: {e}"));
+        }
+    });
+
+    if let Err(e) = app.opener().open_url(auth_url, None::<String>) {
+        state.auth.pending.lock().unwrap().take();
+        return Err(e.into());
+    }
+    Ok(())
 }
 
 async fn authorize(
     app: Extension<tauri::AppHandle>,
-    query: Query<CallbackQuery>,
+    Query(query): Query<HashMap<String, String>>,
 ) -> impl IntoResponse {
-    let auth = &app.state::<AppState>().auth;
+    let pending = app.state::<AppState>().auth.pending.lock().unwrap().take();
+    let Some(Pending { attempt, shutdown }) = pending else {
+        return "No login in progress".to_string();
+    };
+    // The server serves one callback; this request still completes during graceful shutdown.
+    let _ = shutdown.send(());
 
-    if query.state.secret() != auth.csrf_token.secret() {
-        log::warn!("CSRF token mismatch in OAuth callback");
-        return "authorized".to_string(); // Return generic response for security
-    }
+    let code = match parse_callback(&query, attempt.csrf_token.secret()) {
+        Ok(code) => code,
+        Err(message) => {
+            emit_error(&app, message.clone());
+            return message;
+        }
+    };
 
-    match auth
+    match attempt
         .client
-        .exchange_code(query.code.clone())
-        .set_pkce_verifier(PkceCodeVerifier::new(auth.pkce.1.clone()))
+        .exchange_code(AuthorizationCode::new(code))
+        .set_pkce_verifier(attempt.pkce_verifier)
         .request_async(async_http_client)
         .await
     {
         Ok(token) => {
-            let access_token = token.access_token().secret();
-            if let Err(e) = app.emit("access_token", access_token) {
+            if let Err(e) = app.emit("access_token", token.access_token().secret()) {
                 log::error!("Failed to emit access token: {}", e);
             }
+            "Login complete. You can close this tab.".to_string()
         }
         Err(e) => {
             log::error!("OAuth token exchange failed: {}", e);
+            emit_error(&app, "Login failed: token exchange error".to_string());
+            "Login failed. You can close this tab.".to_string()
         }
     }
-
-    "authorized".to_string()
 }
 
-async fn run_server(handle: tauri::AppHandle) -> Result<(), axum::Error> {
+async fn run_server(
+    handle: tauri::AppHandle,
+    listener: TcpListener,
+    shutdown: oneshot::Receiver<()>,
+) -> Result<(), axum::Error> {
     let app = Router::new()
         .route("/callback", get(authorize))
-        .layer(Extension(handle.clone()));
+        .layer(Extension(handle));
 
-    let _ = axum::Server::bind(&handle.state::<AppState>().auth.socket_addr.clone())
+    axum::Server::from_tcp(listener)
+        .map_err(axum::Error::new)?
         .serve(app.into_make_service())
-        .await;
+        .with_graceful_shutdown(async {
+            let _ = shutdown.await;
+        })
+        .await
+        .map_err(axum::Error::new)
+}
 
-    Ok(())
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn q(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn each_attempt_has_fresh_csrf_and_verifier() {
+        let addr: SocketAddr = "127.0.0.1:1".parse().unwrap();
+        let (a, b) = (Attempt::new(addr), Attempt::new(addr));
+        assert_ne!(a.csrf_token.secret(), b.csrf_token.secret());
+        assert_ne!(a.pkce_verifier.secret(), b.pkce_verifier.secret());
+    }
+
+    #[test]
+    fn callback_with_matching_state_yields_code() {
+        assert_eq!(
+            parse_callback(&q(&[("code", "abc"), ("state", "s")]), "s"),
+            Ok("abc".to_string())
+        );
+    }
+
+    #[test]
+    fn cancelled_login_is_reported() {
+        let err = parse_callback(&q(&[("error", "access_denied")]), "s").unwrap_err();
+        assert_eq!(err, "Login was cancelled");
+    }
+
+    #[test]
+    fn state_mismatch_and_missing_code_are_errors() {
+        assert!(parse_callback(&q(&[("code", "abc"), ("state", "x")]), "s").is_err());
+        assert!(parse_callback(&q(&[("state", "s")]), "s").is_err());
+    }
 }

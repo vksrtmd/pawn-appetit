@@ -7,19 +7,10 @@ use tauri::path::BaseDirectory;
 use tauri::{AppHandle, Manager};
 use uuid::Uuid;
 
-#[derive(Debug, Serialize, Deserialize, Clone, Type)]
+#[derive(Debug, Serialize, Deserialize, Clone, Type, Default)]
 pub struct TelemetryConfig {
     pub enabled: bool,
     pub initial_run_completed: bool,
-}
-
-impl Default for TelemetryConfig {
-    fn default() -> Self {
-        Self {
-            enabled: true,
-            initial_run_completed: false,
-        }
-    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -132,40 +123,6 @@ fn get_platform_info() -> String {
     format!("{} {} ({})", os_name, os_version, arch)
 }
 
-#[derive(Debug, Deserialize)]
-struct GeolocationResponse {
-    country: Option<String>,
-    #[serde(rename = "countryCode")]
-    country_code: Option<String>,
-}
-
-async fn get_user_country_from_api() -> Option<String> {
-    let api_url = "http://ip-api.com/json/?fields=countryCode";
-
-    if let Ok(response) = reqwest::Client::new()
-        .get(api_url)
-        .timeout(std::time::Duration::from_secs(5))
-        .send()
-        .await
-    {
-        if let Ok(text) = response.text().await {
-            if let Ok(geo) = serde_json::from_str::<GeolocationResponse>(&text) {
-                if let Some(country_code) = geo.country_code.or(geo.country) {
-                    if country_code.len() == 2
-                        && country_code.chars().all(|c| c.is_ascii_uppercase())
-                    {
-                        log::info!("Retrieved country from IP-API: {}", country_code);
-                        return Some(country_code);
-                    }
-                }
-            }
-        }
-    }
-
-    log::warn!("Failed to get country from IP-API, falling back to locale detection");
-    None
-}
-
 #[allow(clippy::unnecessary_lazy_evaluations)]
 fn get_user_country_from_locale() -> Option<String> {
     std::env::var("LC_ALL")
@@ -223,25 +180,11 @@ fn get_user_country_from_locale() -> Option<String> {
         })
 }
 
-async fn get_user_country() -> Option<String> {
-    if let Some(country) = get_user_country_from_api().await {
-        return Some(country);
-    }
-
-    if let Some(country) = get_user_country_from_locale() {
-        log::info!("Retrieved country from locale: {}", country);
-        return Some(country);
-    }
-
-    log::warn!("Could not determine user country from API or locale");
-    None
-}
-
 async fn track_event_to_supabase(event_name: &str, app: &AppHandle) -> Result<(), TelemetryError> {
     let supabase_url = "https://jklxpooswizrhfdghcog.supabase.co";
     let supabase_key = "sb_publishable_sLNbFdo6jEh5JYYiT9XgmQ_P8jx7z2V";
 
-    let country = get_user_country().await;
+    let country = get_user_country_from_locale();
 
     let event = TelemetryEvent {
         id: Uuid::new_v4().to_string(),
@@ -343,26 +286,14 @@ pub fn get_telemetry_config(app: AppHandle) -> Result<TelemetryConfig, String> {
     TelemetryConfig::load(&app).map_err(|e| format!("Failed to load telemetry config: {}", e))
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn get_user_country_api() -> Result<Option<String>, String> {
-    Ok(get_user_country().await)
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-#[tauri::command]
-#[specta::specta]
-pub fn get_user_country_locale() -> Result<Option<String>, String> {
-    Ok(get_user_country_from_locale())
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn get_user_id_command(app: AppHandle) -> Result<String, String> {
-    Ok(get_user_id(&app))
-}
-
-#[tauri::command]
-#[specta::specta]
-pub fn get_platform_info_command() -> Result<String, String> {
-    Ok(get_platform_info())
+    #[test]
+    fn telemetry_is_off_by_default() {
+        let config = TelemetryConfig::default();
+        assert!(!config.enabled);
+        assert!(!config.initial_run_completed);
+    }
 }

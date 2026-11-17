@@ -315,13 +315,13 @@ Join our [Discord server](https://discord.gg/8hk49G8ZbX) to:
 
 ## Privacy & Telemetry
 
-Pawn Appétit includes optional telemetry. Collected data includes:
+Pawn Appétit includes opt-in telemetry. It is off by default and nothing is sent, including the first-run event, until you turn it on in the settings. Collected data includes:
 
 - Application version, OS, and architecture
-- Anonymized country code (via local detection or `ip-api.com`)
+- Country code taken from your system locale only (no IP lookup service is used)
 - Basic usage events
 
-**No personal information, IP addresses, or game content is collected.** You can disable telemetry at any time in the settings.
+**No personal information, IP addresses, or game content is collected.** You can turn telemetry off again at any time in the settings.
 
 ## Changelog
 
