@@ -3,7 +3,7 @@
  * Per-tab game state uses `tabValue` imported from uiAtoms.
  */
 import { atom } from "jotai";
-import { atomWithStorage, createJSONStorage } from "jotai/utils";
+import { atomWithStorage, createJSONStorage, unwrap } from "jotai/utils";
 import { atomFamily } from "jotai-family";
 import type { SyncStorage } from "jotai/vanilla/utils/atomWithStorage";
 import type { ReviewLog } from "ts-fsrs";
