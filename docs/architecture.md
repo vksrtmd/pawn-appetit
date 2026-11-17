@@ -4,7 +4,7 @@ Pawn Appetit is a Tauri desktop app with a React/Vite frontend and a Rust backen
 
 ## Frontend And Backend Boundary
 
-Frontend code lives in `src/`. It calls generated, typed Tauri commands from `src/bindings.ts` rather than reaching into backend implementation details. Browser-only fallbacks should stay isolated behind environment helpers so the UI can run in tests without Tauri globals.
+Frontend code lives in `src/`. It calls generated, typed Tauri commands through `@/bindings` rather than reaching into backend implementation details. The generated file is `src/bindings/generated.ts`; `src/bindings/index.ts` re-exports it and adds hand-written type overrides. Browser-only fallbacks should stay isolated behind environment helpers so the UI can run in tests without Tauri globals.
 
 Backend code lives in `src-tauri/src/`. Tauri commands should stay thin: validate input, call normal Rust services or module functions, and return serializable data or structured errors. Domain behavior belongs in regular functions that can be tested without launching a Tauri webview.
 
@@ -45,7 +45,7 @@ pnpm lint:rust
 pnpm fmt:rust:check
 ```
 
-Rust backend checks use `--no-default-features` so contributors can run unit tests from a fresh checkout without building the frontend first. Default-feature Cargo builds still use Tauri's production asset embedding path and may require `dist`; use `pnpm build-vite` before default-feature production sanity checks.
+Rust backend checks use `--no-default-features` so contributors can run unit tests from a fresh checkout without building the frontend first. A bare `cargo test` or `cargo clippy` builds with default features and embeds `../dist`: without a `dist/` directory, as in a fresh worktree, it fails with `error: proc macro panicked`. Use the `pnpm` scripts, or create it first (`mkdir -p dist`). Use `pnpm build-vite` before default-feature production sanity checks.
 
 ## Common Workflows
 
