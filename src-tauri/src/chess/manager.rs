@@ -127,59 +127,24 @@ impl<'a> EngineManager<'a> {
                             // Parse FEN safely without unwrap
                             match proc.options.fen.parse() {
                                 Ok(fen) => {
-                                    if let Ok(best_moves) = super::process::parse_uci_attrs(
+                                    if let Some(best_moves) = super::process::best_moves_from_info(
                                         attrs,
                                         &fen,
                                         &proc.options.moves,
                                     ) {
-                                        let multipv = best_moves.multipv;
-                                        let cur_depth = best_moves.depth;
-                                        let cur_nodes = best_moves.nodes;
-                                        if multipv as usize == proc.best_moves.len() + 1 {
-                                            proc.best_moves.push(best_moves);
-                                            if multipv == proc.real_multipv {
-                                                // Only emit if all lines are at the same depth and rate limit allows.
-                                                if proc
-                                                    .best_moves
-                                                    .iter()
-                                                    .all(|x| x.depth == cur_depth)
-                                                    && cur_depth >= proc.last_depth
-                                                    && lim.check().is_ok()
-                                                {
-                                                    let progress = match proc.go_mode {
-                                                        GoMode::Depth(depth) => {
-                                                            (cur_depth as f64 / depth as f64)
-                                                                * 100.0
-                                                        }
-                                                        GoMode::Time(time) => {
-                                                            (proc.start.elapsed().as_millis()
-                                                                as f64
-                                                                / time as f64)
-                                                                * 100.0
-                                                        }
-                                                        GoMode::Nodes(nodes) => {
-                                                            (cur_nodes as f64 / nodes as f64)
-                                                                * 100.0
-                                                        }
-                                                        GoMode::PlayersTime(_) => 99.99,
-                                                        GoMode::Infinite => 99.99,
-                                                    };
-                                                    super::types::BestMovesPayload {
-                                                        best_lines: proc.best_moves.clone(),
-                                                        engine: id_cloned.clone(),
-                                                        tab: tab_cloned.clone(),
-                                                        fen: proc.options.fen.clone(),
-                                                        moves: proc.options.moves.clone(),
-                                                        progress,
-                                                    }
-                                                    .emit(&app_cloned)
-                                                    .ok();
-                                                    proc.last_depth = cur_depth;
-                                                    proc.last_best_moves = proc.best_moves.clone();
-                                                    proc.last_progress = progress as f32;
-                                                }
-                                                proc.best_moves.clear();
+                                        if let Some((progress, best_lines)) =
+                                            proc.record_info(best_moves, || lim.check().is_ok())
+                                        {
+                                            super::types::BestMovesPayload {
+                                                best_lines,
+                                                engine: id_cloned.clone(),
+                                                tab: tab_cloned.clone(),
+                                                fen: proc.options.fen.clone(),
+                                                moves: proc.options.moves.clone(),
+                                                progress,
                                             }
+                                            .emit(&app_cloned)
+                                            .ok();
                                         }
                                     }
                                 }
