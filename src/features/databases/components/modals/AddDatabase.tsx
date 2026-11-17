@@ -27,6 +27,7 @@ import FileInput from "@/components/FileInput";
 import ProgressButton from "@/components/ProgressButton";
 import {
   getDefaultPuzzleDatabases,
+  isDefaultDatabaseInstalled,
   type SuccessDatabaseInfo,
   useDefaultDatabases,
 } from "@/utils/db";
@@ -317,16 +318,6 @@ function AddDatabase({
     }
   }, [puzzleForm]);
 
-  const installedDatabaseTitles = useMemo(
-    () =>
-      new Set(
-        databases
-          .filter((db): db is Extract<DatabaseInfo, { type: "success" }> => db.type === "success")
-          .map((db) => db.title),
-      ),
-    [databases],
-  );
-
   const installedPuzzleTitles = useMemo(
     () => new Set(puzzleDbs?.map((db) => db.title) || []),
     [puzzleDbs],
@@ -379,7 +370,7 @@ function AddDatabase({
                         database={db}
                         databaseId={i}
                         setDatabases={setDatabases}
-                        initInstalled={installedDatabaseTitles.has(db.title)}
+                        initInstalled={isDefaultDatabaseInstalled(databases, db.title)}
                       />
                     ))}
                     {error && (

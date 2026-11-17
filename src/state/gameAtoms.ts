@@ -3,10 +3,11 @@
  * Per-tab game state uses `tabValue` imported from uiAtoms.
  */
 import { atom } from "jotai";
-import { atomFamily, atomWithStorage, createJSONStorage } from "jotai/utils";
+import { atomFamily, atomWithStorage, createJSONStorage, unwrap } from "jotai/utils";
 import type { SyncStorage } from "jotai/vanilla/utils/atomWithStorage";
 import type { ReviewLog } from "ts-fsrs";
 import { z } from "zod";
+import { commands } from "@/bindings";
 import type { OpponentSettings } from "@/features/boards/components/BoardGame";
 import { type Position, positionSchema } from "@/features/files/utils/opening";
 import type { SuccessDatabaseInfo } from "@/utils/db";
@@ -18,7 +19,28 @@ import { tabValue } from "./uiAtoms";
 // Database selection
 // ---------------------------------------------------------------------------
 
-export const referenceDbAtom = atomWithStorage<string | null>("reference-database", null);
+/** The path the user picked. It may point at a file that has since been deleted. */
+export const storedReferenceDbAtom = atomWithStorage<string | null>("reference-database", null);
+
+/** The reference database if its file still opens, otherwise null. */
+export const referenceDbAtom = unwrap(
+    atom(async (get) => {
+        const path = get(storedReferenceDbAtom);
+        if (!path) return null;
+        try {
+            const result = await commands.getDbInfo(path);
+            return result.status === "ok" ? path : null;
+        } catch {
+            return null;
+        }
+    }),
+    () => null,
+);
+/** Forget `file` as the reference database, if it is the one. For when it is deleted. */
+export const forgetReferenceDbAtom = atom(null, (get, set, file: string) => {
+    if (get(storedReferenceDbAtom) === file) set(storedReferenceDbAtom, null);
+});
+
 export const selectedPuzzleDbAtom = atomWithStorage<string | null>("puzzle-db", null);
 export const selectedDatabaseAtom = atomWithStorage<SuccessDatabaseInfo | null>(
     "database-view",
