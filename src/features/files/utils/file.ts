@@ -1,5 +1,5 @@
 import { BaseDirectory, basename, join } from "@tauri-apps/api/path";
-import { type DirEntry, exists, readDir, readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
+import { type DirEntry, exists, readDir, readTextFile } from "@tauri-apps/plugin-fs";
 import { z } from "zod";
 import { commands } from "@/bindings";
 import { unwrap } from "@/utils/unwrap";
@@ -49,27 +49,38 @@ export type FileData = {
     games: string[];
 };
 
+/** The `.info` sidecar of a PGN path: only the trailing extension changes. */
+export function infoPathFor(pgnPath: string): string {
+    return pgnPath.replace(/\.pgn$/, ".info");
+}
+
+const DEFAULT_METADATA: FileInfoMetadata = { type: "other", tags: [] };
+
+async function readInfo(metadataPath: string): Promise<FileInfoMetadata> {
+    try {
+        if (await exists(metadataPath)) {
+            const parsed = fileInfoMetadataSchema.safeParse(
+                JSON.parse(await readTextFile(metadataPath)),
+            );
+            if (parsed.success) return parsed.data;
+        }
+    } catch {
+        // an unreadable or broken sidecar reads as the default; the file stays as it is
+    }
+    return { ...DEFAULT_METADATA, tags: [] };
+}
+
 async function readFileMetadata(path: string): Promise<FileMetadata | null> {
     if (!path.endsWith(".pgn")) {
         return null;
     }
-    const metadataPath = path.replace(".pgn", ".info");
-    let metadata: FileInfoMetadata;
-    if (await exists(metadataPath)) {
-        metadata = JSON.parse(await readTextFile(metadataPath));
-    } else {
-        metadata = {
-            type: "other",
-            tags: [],
-        };
-        await writeTextFile(metadataPath, JSON.stringify(metadata));
-    }
+    const metadata = await readInfo(infoPathFor(path));
     const fileMetadata = unwrap(await commands.getFileMetadata(path));
     const numGames = unwrap(await commands.countPgnGames(path));
     return {
         type: "file",
         path,
-        name: (await basename(path)).replace(".pgn", ""),
+        name: (await basename(path)).replace(/\.pgn$/, ""),
         numGames,
         metadata,
         lastModified: Number(fileMetadata.last_modified),

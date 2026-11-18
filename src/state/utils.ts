@@ -54,7 +54,6 @@ export function createZodStorage<Value>(
                 return schema.parse(JSON.parse(storedValue));
             } catch {
                 logger.warn("Invalid value for", { key, storedValue });
-                this.setItem(key, initialValue);
                 return initialValue;
             }
         },
@@ -83,7 +82,6 @@ export function createAsyncZodStorage<Value>(
                     return res.data;
                 }
                 logger.warn("Invalid value for", { key, storedValue, error: res.error });
-                await this.setItem(key, initialValue);
                 return initialValue;
             } catch (error) {
                 logger.error("Error getting", { key, error });
@@ -91,10 +89,10 @@ export function createAsyncZodStorage<Value>(
             }
         },
         async setItem(key, value) {
-            storage.setItem(key, JSON.stringify(value, null, 4));
+            await storage.setItem(key, JSON.stringify(value, null, 4));
         },
         async removeItem(key) {
-            storage.removeItem(key);
+            await storage.removeItem(key);
         },
     };
 }
