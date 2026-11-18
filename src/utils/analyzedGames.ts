@@ -32,23 +32,6 @@ export async function saveAnalyzedGame(gameId: string, analyzedPgn: string): Pro
 }
 
 /**
- * Get an analyzed PGN for a game
- * @param gameId - Unique identifier (URL for Chess.com, ID for Lichess)
- * @returns The analyzed PGN string if found, null otherwise
- */
-export async function getAnalyzedGame(gameId: string): Promise<string | null> {
-    const dir = await appDataDir();
-    const file = await resolve(dir, FILENAME);
-    try {
-        const text = await readTextFile(file);
-        const analyzedGames: AnalyzedGamesMap = JSON.parse(text);
-        return analyzedGames[gameId] || null;
-    } catch {
-        return null;
-    }
-}
-
-/**
  * Get all analyzed games
  * @returns Map of game IDs to analyzed PGNs
  */
@@ -61,24 +44,6 @@ export async function getAllAnalyzedGames(): Promise<AnalyzedGamesMap> {
     } catch {
         return {};
     }
-}
-
-/**
- * Remove an analyzed game
- * @param gameId - Unique identifier (URL for Chess.com, ID for Lichess)
- */
-export async function removeAnalyzedGame(gameId: string): Promise<void> {
-    const dir = await appDataDir();
-    const file = await resolve(dir, FILENAME);
-    let analyzedGames: AnalyzedGamesMap = {};
-    try {
-        const text = await readTextFile(file);
-        analyzedGames = JSON.parse(text);
-    } catch {
-        return;
-    }
-    delete analyzedGames[gameId];
-    await writeTextFile(file, JSON.stringify(analyzedGames));
 }
 
 /**
@@ -139,13 +104,4 @@ export async function removeAnalyzedGamesForAccount(
     }
 
     await writeTextFile(file, JSON.stringify(filteredGames));
-}
-
-/**
- * Remove ALL analyzed games (clear all analysis)
- */
-export async function clearAllAnalyzedGames(): Promise<void> {
-    const dir = await appDataDir();
-    const file = await resolve(dir, FILENAME);
-    await writeTextFile(file, JSON.stringify({}));
 }

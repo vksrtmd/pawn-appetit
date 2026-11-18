@@ -7,10 +7,10 @@ import { nativeBarAtom, sidebarCollapsedAtom } from "@/state/atoms";
 import { vars } from "@/styles/theme";
 
 // Platform types
-export type Platform = "desktop" | "mobile" | "web";
+type Platform = "desktop" | "mobile" | "web";
 
 // Get platform from Tauri OS plugin
-export const getPlatform = (): Platform => {
+const getPlatform = (): Platform => {
     try {
         const osType = type();
         if (osType === "android" || osType === "ios") {
@@ -23,12 +23,12 @@ export const getPlatform = (): Platform => {
     }
 };
 
-export type MenuBarMode = "disabled" | "native" | "custom";
-export type SideBarPosition = "navbar" | "footer";
-export type PanelsType = "drawer" | "sidepanel";
-export type DrawerPosition = "top" | "bottom";
+type MenuBarMode = "disabled" | "native" | "custom";
+type SideBarPosition = "navbar" | "footer";
+type PanelsType = "drawer" | "sidepanel";
+type DrawerPosition = "top" | "bottom";
 export type LayoutType = "mobile" | "desktop";
-export type DatabasesDensity = "compact" | "normal" | "comfortable";
+type DatabasesDensity = "compact" | "normal" | "comfortable";
 
 type ResponsiveLayout = {
     // App shell configuration

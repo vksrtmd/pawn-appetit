@@ -75,8 +75,6 @@ export function getPuzzleStats(options?: { days?: number; target?: number }) {
     return { currentStreak, target, history };
 }
 
-export type PuzzleStats = ReturnType<typeof getPuzzleStats>;
-
 export function getTodayPuzzleCount(d: Date = new Date()): number {
     const solves = readSolves();
     const key = dateKey(d);

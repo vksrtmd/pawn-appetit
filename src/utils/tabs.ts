@@ -21,7 +21,6 @@ const dbGameMetadataSchema = z.object({
     db: z.string(),
     id: z.number(),
 });
-export type DbGameMetadata = z.infer<typeof dbGameMetadataSchema>;
 
 const entitySourceMetadataSchema = z.union([fileMetadataSchema, dbGameMetadataSchema]);
 

@@ -1,4 +1,3 @@
-import type { Color } from "@lichess-org/chessground/types";
 import { notifications } from "@mantine/notifications";
 import { IconX } from "@tabler/icons-react";
 import { appDataDir, resolve } from "@tauri-apps/api/path";
@@ -55,7 +54,7 @@ type TablebaseData = {
   moves: TablebaseMove[];
 };
 
-export type TablebaseMove = {
+type TablebaseMove = {
   uci: string;
   san: string;
   zeroing: boolean;
@@ -400,11 +399,6 @@ export async function getMasterGames(
 ): Promise<PositionData> {
   const url = `${explorerURL}/masters?${getMasterGamesQueryParams(fen, options)}`;
   return fetchExplorer(url, token);
-}
-
-export async function getPlayerGames(fen: string, player: string, color: Color, token: string) {
-  const params = new URLSearchParams({ fen, player, color });
-  return fetchExplorer(`${explorerURL}/player?${params}`, token);
 }
 
 async function fetchExplorer(url: string, token: string): Promise<PositionData> {

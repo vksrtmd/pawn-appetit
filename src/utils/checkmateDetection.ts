@@ -78,7 +78,7 @@ export function evaluateCheckmateMoves(
  * @param fen The position in FEN notation
  * @returns true if the position is checkmate, false otherwise
  */
-export function isPositionCheckmate(fen: string): boolean {
+function isPositionCheckmate(fen: string): boolean {
     try {
         const [setup, error] = parseFen(fen).unwrap(
             (v) => [v, null],
@@ -99,37 +99,6 @@ export function isPositionCheckmate(fen: string): boolean {
         }
 
         return pos.isCheckmate();
-    } catch {
-        return false;
-    }
-}
-
-/**
- * Checks if a given FEN position is in check
- * @param fen The position in FEN notation
- * @returns true if the position is in check, false otherwise
- */
-export function isPositionInCheck(fen: string): boolean {
-    try {
-        const [setup, error] = parseFen(fen).unwrap(
-            (v) => [v, null],
-            (e) => [null, e],
-        );
-
-        if (error || !setup) {
-            return false;
-        }
-
-        const [pos, posError] = Chess.fromSetup(setup).unwrap(
-            (v) => [v, null],
-            (e) => [null, e],
-        );
-
-        if (posError || !pos) {
-            return false;
-        }
-
-        return pos.isCheck();
     } catch {
         return false;
     }

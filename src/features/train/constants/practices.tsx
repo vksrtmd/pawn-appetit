@@ -1,12 +1,10 @@
-import { IconBrain, IconCrown, IconRocket, IconSchool, IconSword } from "@tabler/icons-react";
-
-export enum DifficultyLevel {
+enum DifficultyLevel {
   BEGINNER = "beginner",
   INTERMEDIATE = "intermediate",
   ADVANCED = "advanced",
 }
 
-export enum PracticeGroup {
+enum PracticeGroup {
   CHECKMATES = "checkmates",
   BASIC_TACTICS = "basic-tactics",
   INTERMEDIATE_TACTICS = "intermediate-tactics",
@@ -14,7 +12,7 @@ export enum PracticeGroup {
   ROOK_ENDGAMES = "rook-endgames",
 }
 
-export interface ExerciseMetadata {
+interface ExerciseMetadata {
   readonly id: string;
   readonly title: string;
   readonly description: string;
@@ -27,7 +25,7 @@ export interface ExerciseMetadata {
   readonly version?: string;
 }
 
-export interface ExerciseGameData {
+interface ExerciseGameData {
   readonly fen: string;
   readonly correctMoves?: readonly string[];
   readonly hints?: readonly string[];
@@ -38,7 +36,7 @@ export interface PracticeExercise extends ExerciseMetadata {
   readonly gameData: ExerciseGameData;
 }
 
-export interface CategoryMetadata {
+interface CategoryMetadata {
   readonly id: string;
   readonly group: PracticeGroup;
   readonly title: string;
@@ -55,20 +53,7 @@ export interface PracticeCategory extends CategoryMetadata {
   readonly exercises: readonly PracticeExercise[];
 }
 
-export interface UIConfig {
-  readonly groups: Record<
-    PracticeGroup,
-    {
-      readonly label: string;
-      readonly description: string;
-      readonly order: number;
-    }
-  >;
-  readonly icons: Record<string, React.ReactNode>;
-  readonly colors: Record<string, string>;
-}
-
-export const practiceData: readonly PracticeCategory[] = [
+const practiceData: readonly PracticeCategory[] = [
   {
     id: "piece-checkmates",
     group: PracticeGroup.CHECKMATES,
@@ -282,126 +267,4 @@ export const practiceData: readonly PracticeCategory[] = [
   },
 ] as const;
 
-export const uiConfig: UIConfig = {
-  groups: {
-    [PracticeGroup.CHECKMATES]: {
-      label: "Checkmates",
-      description: "Learn fundamental checkmate patterns",
-      order: 1,
-    },
-    [PracticeGroup.BASIC_TACTICS]: {
-      label: "Basic Tactics",
-      description: "Essential tactical motifs",
-      order: 2,
-    },
-    [PracticeGroup.INTERMEDIATE_TACTICS]: {
-      label: "Intermediate Tactics",
-      description: "More complex tactical combinations",
-      order: 3,
-    },
-    [PracticeGroup.PAWN_ENDGAMES]: {
-      label: "Pawn Endgames",
-      description: "Master pawn endgame techniques",
-      order: 4,
-    },
-    [PracticeGroup.ROOK_ENDGAMES]: {
-      label: "Rook Endgames",
-      description: "Essential rook endgame knowledge",
-      order: 5,
-    },
-  },
-  icons: {
-    crown: <IconCrown size={24} />,
-    sword: <IconSword size={24} />,
-    brain: <IconBrain size={24} />,
-    school: <IconSchool size={24} />,
-    rocket: <IconRocket size={24} />,
-  },
-  colors: {
-    yellow: "#fbbf24",
-    red: "#ef4444",
-    blue: "#3b82f6",
-    green: "#22c55e",
-    purple: "#a855f7",
-  },
-};
-
-export class PracticeDataManager {
-  private static instance: PracticeDataManager;
-
-  private constructor(private data: readonly PracticeCategory[]) {}
-
-  static getInstance(data: readonly PracticeCategory[] = practiceData): PracticeDataManager {
-    if (!PracticeDataManager.instance) {
-      PracticeDataManager.instance = new PracticeDataManager(data);
-    }
-    return PracticeDataManager.instance;
-  }
-
-  getCategories(): readonly PracticeCategory[] {
-    return this.data;
-  }
-
-  getCategoriesByGroup(group: PracticeGroup): readonly PracticeCategory[] {
-    return this.data.filter((category) => category.group === group);
-  }
-
-  getExercisesByDifficulty(difficulty: DifficultyLevel): readonly PracticeExercise[] {
-    return this.data.flatMap((category) =>
-      category.exercises.filter((exercise) => exercise.difficulty === difficulty),
-    );
-  }
-
-  getExercisesByTags(tags: string[]): readonly PracticeExercise[] {
-    return this.data.flatMap((category) =>
-      category.exercises.filter((exercise) => tags.some((tag) => exercise.tags?.includes(tag))),
-    );
-  }
-
-  getUnlockedExercises(completedExerciseIds: string[]): readonly PracticeExercise[] {
-    return this.data.flatMap((category) =>
-      category.exercises.filter(
-        (exercise) =>
-          !exercise.prerequisites ||
-          exercise.prerequisites.every((prereq) => completedExerciseIds.includes(prereq)),
-      ),
-    );
-  }
-
-  getCategoryById(id: string): PracticeCategory | undefined {
-    return this.data.find((category) => category.id === id);
-  }
-
-  getExerciseById(
-    exerciseId: string,
-  ): { exercise: PracticeExercise; category: PracticeCategory } | undefined {
-    for (const category of this.data) {
-      const exercise = category.exercises.find((ex) => ex.id === exerciseId);
-      if (exercise) {
-        return { exercise, category };
-      }
-    }
-    return undefined;
-  }
-
-  getStatistics() {
-    const totalExercises = this.data.reduce((sum, cat) => sum + cat.exercises.length, 0);
-    const exercisesByDifficulty = {
-      [DifficultyLevel.BEGINNER]: this.getExercisesByDifficulty(DifficultyLevel.BEGINNER).length,
-      [DifficultyLevel.INTERMEDIATE]: this.getExercisesByDifficulty(DifficultyLevel.INTERMEDIATE)
-        .length,
-      [DifficultyLevel.ADVANCED]: this.getExercisesByDifficulty(DifficultyLevel.ADVANCED).length,
-    };
-
-    return {
-      totalCategories: this.data.length,
-      totalExercises,
-      exercisesByDifficulty,
-      groups: Object.keys(PracticeGroup).length,
-    };
-  }
-}
-
 export const practices = practiceData;
-
-export const practiceManager = PracticeDataManager.getInstance();

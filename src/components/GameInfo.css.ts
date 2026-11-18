@@ -36,41 +36,6 @@ export const textInput = style({
     },
 });
 
-export const nameInput = style({
-    padding: 0,
-    fontWeight: 500,
-    lineHeight: 0,
-    height: "auto",
-    ":disabled": {
-        cursor: "default",
-        backgroundColor: "transparent",
-        [vars.lightSelector]: {
-            color: vars.colors.gray[0],
-        },
-        [vars.darkSelector]: {
-            color: vars.colors.black,
-        },
-    },
-});
-
-export const eloInput = style({
-    all: "unset",
-    height: "auto",
-    opacity: "75%",
-    padding: 0,
-    lineHeight: 0,
-    ":disabled": {
-        cursor: "default",
-        backgroundColor: "transparent",
-        [vars.lightSelector]: {
-            color: vars.colors.gray[0],
-        },
-        [vars.darkSelector]: {
-            color: vars.colors.black,
-        },
-    },
-});
-
 export const right = style({
     textAlign: "right",
 });
