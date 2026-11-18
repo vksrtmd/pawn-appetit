@@ -1,6 +1,5 @@
-import { appDataDir, resolve } from "@tauri-apps/api/path";
-import { readTextFile, writeTextFile } from "@tauri-apps/plugin-fs";
 import { getGameStats, parsePGN } from "@/utils/chess";
+import { readHistoryFile, updateHistoryFile } from "@/utils/historyFile";
 
 export interface GameRecord {
     id: string;
@@ -26,18 +25,7 @@ export interface GameRecord {
 
 const FILENAME = "played_games.json";
 
-export async function saveGameRecord(record: GameRecord) {
-    const dir = await appDataDir();
-    const file = await resolve(dir, FILENAME);
-    let records: GameRecord[] = [];
-    try {
-        const text = await readTextFile(file);
-        records = JSON.parse(text);
-    } catch {
-        // file may not exist yet
-    }
-    records.unshift(record);
-    await writeTextFile(file, JSON.stringify(records));
+function notifyGamesUpdated() {
     if (typeof window !== "undefined") {
         try {
             window.dispatchEvent(new Event("games:updated"));
@@ -47,12 +35,14 @@ export async function saveGameRecord(record: GameRecord) {
     }
 }
 
+export async function saveGameRecord(record: GameRecord) {
+    await updateHistoryFile<GameRecord[]>(FILENAME, [], (records) => [record, ...records]);
+    notifyGamesUpdated();
+}
+
 export async function getRecentGames(limit = 20): Promise<GameRecord[]> {
-    const dir = await appDataDir();
-    const file = await resolve(dir, FILENAME);
     try {
-        const text = await readTextFile(file);
-        const records: GameRecord[] = JSON.parse(text);
+        const records = await readHistoryFile<GameRecord[]>(FILENAME, []);
 
         // Filter out invalid/corrupted games
         const validRecords = records.filter((record) => {
@@ -85,11 +75,8 @@ export async function getRecentGames(limit = 20): Promise<GameRecord[]> {
 }
 
 export async function countGamesOnDate(date: Date = new Date()): Promise<number> {
-    const dir = await appDataDir();
-    const file = await resolve(dir, FILENAME);
     try {
-        const text = await readTextFile(file);
-        const records: GameRecord[] = JSON.parse(text);
+        const records = await readHistoryFile<GameRecord[]>(FILENAME, []);
         const y = date.getFullYear();
         const m = date.getMonth();
         const d = date.getDate();
@@ -103,69 +90,27 @@ export async function countGamesOnDate(date: Date = new Date()): Promise<number>
 }
 
 export async function clearAllGames(): Promise<void> {
-    const dir = await appDataDir();
-    const file = await resolve(dir, FILENAME);
-    // Write an empty array to clear all games
-    await writeTextFile(file, JSON.stringify([]));
-    if (typeof window !== "undefined") {
-        try {
-            window.dispatchEvent(new Event("games:updated"));
-        } catch {
-            // ignore
-        }
-    }
+    await updateHistoryFile<GameRecord[]>(FILENAME, [], () => []);
+    notifyGamesUpdated();
 }
 
 export async function updateGameRecord(
     gameId: string,
     updates: Partial<GameRecord>,
 ): Promise<void> {
-    const dir = await appDataDir();
-    const file = await resolve(dir, FILENAME);
-    let records: GameRecord[] = [];
-    try {
-        const text = await readTextFile(file);
-        records = JSON.parse(text);
-    } catch {
-        // file may not exist yet
-        return;
-    }
-
-    const index = records.findIndex((r) => r.id === gameId);
-    if (index !== -1) {
-        records[index] = { ...records[index], ...updates };
-        await writeTextFile(file, JSON.stringify(records));
-        if (typeof window !== "undefined") {
-            try {
-                window.dispatchEvent(new Event("games:updated"));
-            } catch {
-                // ignore
-            }
-        }
-    }
+    const changed = await updateHistoryFile<GameRecord[]>(FILENAME, [], (records) => {
+        const index = records.findIndex((r) => r.id === gameId);
+        if (index === -1) return undefined;
+        return records.map((r, i) => (i === index ? { ...r, ...updates } : r));
+    });
+    if (changed) notifyGamesUpdated();
 }
 
 export async function deleteGameRecord(gameId: string): Promise<void> {
-    const dir = await appDataDir();
-    const file = await resolve(dir, FILENAME);
-    let records: GameRecord[] = [];
-    try {
-        const text = await readTextFile(file);
-        records = JSON.parse(text);
-    } catch {
-        // file may not exist yet
-        return;
-    }
-
-    const filteredRecords = records.filter((r) => r.id !== gameId);
-    await writeTextFile(file, JSON.stringify(filteredRecords));
-    if (typeof window !== "undefined") {
-        try {
-            window.dispatchEvent(new Event("games:updated"));
-        } catch {
-            // ignore
-        }
-    }
+    const changed = await updateHistoryFile<GameRecord[]>(FILENAME, [], (records) =>
+        records.some((r) => r.id === gameId) ? records.filter((r) => r.id !== gameId) : undefined,
+    );
+    if (changed) notifyGamesUpdated();
 }
 
 export interface GameStats {
