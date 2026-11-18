@@ -184,8 +184,7 @@ describe("downloadChessCom", () => {
     });
 
     test("still fetches the March archive for a game at 2026-03-31 22:00 UTC when the clock is in Tokyo", async () => {
-        const previousTz = process.env.TZ;
-        process.env.TZ = "Asia/Tokyo";
+        vi.stubEnv("TZ", "Asia/Tokyo");
         try {
             const feb = archiveUrl(2026, "02");
             const mar = archiveUrl(2026, "03");
@@ -198,8 +197,7 @@ describe("downloadChessCom", () => {
 
             expect(mocks.fetch.mock.calls.map((c) => c[0])).toEqual([list, mar]);
         } finally {
-            if (previousTz === undefined) delete process.env.TZ;
-            else process.env.TZ = previousTz;
+            vi.unstubAllEnvs();
         }
     });
 
