@@ -7,7 +7,7 @@
 //! equals the given id exactly, including slots still starting up.
 
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::Duration;
 
@@ -31,6 +31,8 @@ pub struct Slot {
     process: OnceCell<Arc<Mutex<EngineProcess>>>,
     reader: StdMutex<Option<EngineLines>>,
     closed: watch::Sender<bool>,
+    /// The child's pid, so the exit hook can kill a process whose lock is held.
+    pid: AtomicU32,
 }
 
 impl Slot {
@@ -40,6 +42,7 @@ impl Slot {
             process: OnceCell::new(),
             reader: StdMutex::new(None),
             closed: watch::channel(false).0,
+            pid: AtomicU32::new(0),
         }
     }
 
@@ -101,6 +104,8 @@ impl EngineRegistry {
                     started = EngineProcess::new(path) => started?,
                     _ = closed.wait_for(|closed| *closed) => return Err(Error::EngineKilled),
                 };
+                slot.pid
+                    .store(process.child.id().unwrap_or(0), Ordering::SeqCst);
                 *slot.reader.lock().unwrap() = Some(reader);
                 created.store(true, Ordering::SeqCst);
                 Ok(Arc::new(Mutex::new(process)))
@@ -169,12 +174,27 @@ impl EngineRegistry {
     }
 
     /// Kill every engine without awaiting, for the synchronous app-exit hook. A process whose
-    /// lock is held is still killed when its owner drops it (`kill_on_drop`).
+    /// lock is held is killed through its pid.
     pub fn kill_all_now(&self) {
+        use sysinfo::{Pid, PidExt, ProcessExt, System, SystemExt};
         for entry in self.slots.iter() {
             entry.closed.send_replace(true);
-            if let Some(Ok(mut process)) = entry.process.get().map(|p| p.try_lock()) {
-                let _ = process.child.start_kill();
+            let Some(process) = entry.process.get() else {
+                continue; // still starting: the closed signal drops the child
+            };
+            match process.try_lock() {
+                Ok(mut process) => {
+                    let _ = process.child.start_kill();
+                }
+                Err(_) if entry.pid.load(Ordering::SeqCst) != 0 => {
+                    let pid = Pid::from_u32(entry.pid.load(Ordering::SeqCst));
+                    let mut system = System::new();
+                    system.refresh_process(pid);
+                    if let Some(process) = system.process(pid) {
+                        process.kill();
+                    }
+                }
+                Err(_) => {}
             }
         }
     }
@@ -286,5 +306,33 @@ mod tests {
         );
 
         assert!(a.is_ok() && b.is_ok());
+    }
+
+    #[tokio::test]
+    async fn kill_all_now_terminates_every_engine_even_one_whose_lock_is_held() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = engine(dir.path(), "engine", "0");
+        let registry = EngineRegistry::default();
+        let mut started = Vec::new();
+        for tab in ["a", "b"] {
+            started.push(
+                registry
+                    .get_or_start(key(tab), tab.into(), path.clone())
+                    .await
+                    .unwrap(),
+            );
+        }
+        // Tab "b" is busy: something holds its process lock while the app exits.
+        let held = started[1].process.lock().await;
+
+        registry.kill_all_now();
+
+        let pids = pids(dir.path());
+        assert_eq!(pids.len(), 2);
+        assert!(
+            eventually(3, || pids.iter().all(|p| !alive(*p))).await,
+            "an engine survived the exit hook"
+        );
+        drop(held);
     }
 }
