@@ -91,12 +91,14 @@ async fn analyze_positions(
         proc.go(go_mode).await?;
 
         let mut current_analysis = MoveAnalysis::default();
-        // Read engine output and keep the last complete depth for this position.
+        // Read engine output up to `bestmove`, which carries the last complete depth.
         while let Ok(Some(line)) = reader.next_line().await {
             match proc.handle_line(&line, || true) {
-                LineEvent::Depth { lines, .. } => current_analysis.best = lines,
-                LineEvent::BestMove { .. } => break,
-                LineEvent::Other => {}
+                LineEvent::BestMove { lines, .. } => {
+                    current_analysis.best = lines;
+                    break;
+                }
+                LineEvent::Depth { .. } | LineEvent::Other => {}
             }
         }
         analysis.push(current_analysis);
@@ -343,5 +345,49 @@ mod tests {
                 .await,
             "review engine still alive"
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn review_records_no_bound_lines() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = super::super::test_support::script(
+            dir.path(),
+            "bounds.sh",
+            r#"while read l; do
+  case "$l" in
+    uci) echo uciok;;
+    isready) echo readyok;;
+    go*) echo "info depth 10 score cp 500 lowerbound multipv 1 pv e2e4"
+         echo "info depth 10 score cp 20 multipv 2 pv d2d4"
+         echo "bestmove e2e4";;
+  esac
+done
+"#,
+        );
+        let registry = super::super::registry::EngineRegistry::default();
+        let started = registry
+            .get_or_start(("report".into(), "b".into()), "tab".into(), path)
+            .await
+            .unwrap();
+        let mut reader = started.reader.unwrap();
+        let mut proc = started.process.lock().await;
+
+        let analysis = analyze_positions(
+            &mut proc,
+            &mut reader,
+            &options(&[]),
+            &game_positions(&options(&[])).unwrap(),
+            &GoMode::Depth(10),
+            &[],
+            |_| Ok(()),
+        )
+        .await
+        .unwrap();
+
+        for line in analysis.iter().flat_map(|a| &a.best) {
+            assert_ne!(line.score.lower_bound, Some(true));
+            assert_ne!(line.score.upper_bound, Some(true));
+        }
     }
 }

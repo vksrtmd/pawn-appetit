@@ -80,6 +80,8 @@ pub struct BestMovesPayload {
     pub fen: String,
     pub moves: Vec<String>,
     pub progress: f64,
+    // The engine's chosen move: set on the final payload (`progress` 100) only.
+    pub bestmove: Option<String>,
 }
 
 /// Analysis result for a single move/position.
