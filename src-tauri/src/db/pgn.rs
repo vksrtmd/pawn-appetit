@@ -303,9 +303,15 @@ impl Visitor for Importer {
                 let fen = Fen::from_ascii(value.as_bytes());
                 if let Ok(fen) = fen {
                     self.game.fen = Some(value.decode_utf8_lossy().into_owned());
-                    if let Ok(setup) =
-                        Chess::from_setup(fen.into_setup(), shakmaty::CastlingMode::Standard)
+                    // Standard castling first; a Chess960 start (rooks off the a/h
+                    // files, a king off e) only reads in Chess960 mode.
+                    let setup = fen.into_setup();
+                    let read = |mode| {
+                        Chess::from_setup(setup.clone(), mode)
                             .or_else(PositionError::ignore_too_much_material)
+                    };
+                    if let Ok(setup) = read(shakmaty::CastlingMode::Standard)
+                        .or_else(|_| read(shakmaty::CastlingMode::Chess960))
                     {
                         self.game.position = setup;
                     } else {

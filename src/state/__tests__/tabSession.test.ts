@@ -9,6 +9,7 @@ const {
     readGames,
     save: saveDialog,
     createFile,
+    show,
 } = vi.hoisted(() => ({
     killEngines: vi.fn<(...a: unknown[]) => unknown>(),
     writeGame: vi.fn<(...a: unknown[]) => unknown>(),
@@ -17,6 +18,7 @@ const {
     readGames: vi.fn<(...a: unknown[]) => unknown>(),
     save: vi.fn<() => unknown>(),
     createFile: vi.fn<(...a: unknown[]) => unknown>(),
+    show: vi.fn<(...a: unknown[]) => void>(),
 }));
 
 vi.mock("@/bindings", () => ({
@@ -24,7 +26,7 @@ vi.mock("@/bindings", () => ({
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: saveDialog }));
 vi.mock("@tauri-apps/plugin-log", () => ({ error: vi.fn<() => void>() }));
-vi.mock("@mantine/notifications", () => ({ notifications: { show: vi.fn<() => void>() } }));
+vi.mock("@mantine/notifications", () => ({ notifications: { show } }));
 vi.mock("@/features/files/utils/file", async () => ({
     fileMetadataSchema: (await import("zod")).z.any(),
     invalidateFileIndex: vi.fn<() => void>(),
@@ -137,6 +139,7 @@ test("a failed database update leaves the tab dirty and save rejects", async () 
 
     await expect(save("t", { dir: "/d" })).rejects.toThrow("locked");
     expect(store.getState().dirty).toBe(true);
+    expect(show).toHaveBeenCalledWith(expect.objectContaining({ message: "locked", color: "red" }));
 });
 
 test("a tab with no file goes through save-as and records the new file as its source", async () => {

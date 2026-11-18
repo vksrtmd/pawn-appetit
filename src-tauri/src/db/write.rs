@@ -593,4 +593,42 @@ mod tests {
             .unwrap();
         assert_eq!(alices, 1);
     }
+
+    const C960_FEN: &str = "3k4/8/8/8/8/8/8/1R1K2R1 w GB - 0 1";
+
+    #[test]
+    fn a_chess960_game_keeps_its_castling_move_after_a_save() {
+        let db = TempDb::new("c960");
+        let mut conn = db.open();
+        let id = seed_game(&mut conn, "Alice", "Bob", "Open");
+        diesel::update(games::table)
+            .set((
+                games::white_material.eq(0),
+                games::black_material.eq(0),
+                games::pawn_home.eq(0),
+            ))
+            .execute(&mut conn)
+            .unwrap();
+        update_game(&mut conn, id, &update_with(C960_FEN, "1. O-O Kc7 *")).unwrap();
+        let game = core::get_game(&mut conn, id).unwrap();
+        assert_eq!(game.ply_count, Some(2));
+        assert!(
+            game.moves.contains("O-O") && game.moves.contains("Kc7"),
+            "{}",
+            game.moves
+        );
+    }
+
+    #[test]
+    fn importing_a_chess960_game_keeps_its_moves() {
+        let db = TempDb::new("c960-import");
+        let mut conn = db.open();
+        import_source_game(
+            &mut conn,
+            &format!(
+                "[Variant \"Chess960\"]\n[FEN \"{C960_FEN}\"]\n[White \"a\"]\n[Black \"b\"]\n\n1. O-O Kc7 *\n"
+            ),
+        );
+        assert_eq!(real(&mut conn)[0], 1);
+    }
 }
