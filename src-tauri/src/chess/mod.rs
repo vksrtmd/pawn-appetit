@@ -8,11 +8,15 @@ pub mod commands;
 pub mod evaluation;
 pub mod manager;
 pub mod process;
+pub mod registry;
 pub mod session;
+#[cfg(all(test, unix))]
+pub(crate) mod test_support;
 pub mod types;
 pub mod uci;
 
 #[allow(unused_imports)]
 pub use {
-    analysis::*, commands::*, evaluation::*, manager::*, process::*, session::*, types::*, uci::*,
+    analysis::*, commands::*, evaluation::*, manager::*, process::*, registry::*, session::*,
+    types::*, uci::*,
 };

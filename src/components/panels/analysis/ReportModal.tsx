@@ -114,6 +114,7 @@ function ReportModal({
           moves,
         },
         engineSettings,
+        tab,
       )
       .then((analysis) => {
         if (analysisIdRef.current) {

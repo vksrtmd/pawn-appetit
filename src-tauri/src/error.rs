@@ -116,6 +116,9 @@ pub enum Error {
     #[error("Engine initialization failed: {0}")]
     EngineInitFailed(String),
 
+    #[error("Engine was stopped before it finished starting")]
+    EngineKilled,
+
     #[error("Analysis cancelled")]
     AnalysisCancelled,
 
