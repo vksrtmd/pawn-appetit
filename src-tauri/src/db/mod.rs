@@ -11,10 +11,11 @@ mod pgn;
 mod progress;
 mod schema;
 mod search;
+mod write;
 
 use crate::{
     db::{encoding::extract_main_line_moves, import::insert_to_db, models::*, schema::*},
-    error::{Error, Result},
+    error::Result,
     opening::get_opening_from_setup,
     AppState,
 };
@@ -108,7 +109,7 @@ pub async fn convert_pgn(
     let start = Instant::now();
 
     let mut importer = Importer::new(timestamp.map(|t| t as i64));
-    db.transaction::<_, Error, _>(|db| {
+    write::apply(db, write::Change::GamesInserted, |db| {
         for (i, game) in BufferedReader::new(uncompressed)
             .into_iter(&mut importer)
             .flatten()
@@ -128,8 +129,6 @@ pub async fn convert_pgn(
         // Create all the necessary indexes
         db.batch_execute(INDEXES_SQL)?;
     }
-
-    core::refresh_info_counts(db)?;
 
     Ok(())
 }
@@ -987,7 +986,7 @@ pub async fn delete_db_game(
 ) -> Result<()> {
     let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
 
-    core::remove_game(db, game_id)?;
+    write::remove_game(db, game_id)?;
 
     Ok(())
 }
@@ -1014,7 +1013,7 @@ pub async fn update_game(
 ) -> Result<()> {
     let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
 
-    core::update_game(db, game_id, &update)?;
+    write::update_game(db, game_id, &update)?;
 
     Ok(())
 }
@@ -1029,28 +1028,5 @@ pub async fn merge_players(
 ) -> Result<()> {
     let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
 
-    // Check if the players never played against each other
-    let count: i64 = games::table
-        .filter(games::white_id.eq(player1).and(games::black_id.eq(player2)))
-        .or_filter(games::white_id.eq(player2).and(games::black_id.eq(player1)))
-        .limit(1)
-        .count()
-        .get_result(db)?;
-
-    if count > 0 {
-        return Err(Error::NotDistinctPlayers);
-    }
-
-    diesel::update(games::table.filter(games::white_id.eq(player1)))
-        .set(games::white_id.eq(player2))
-        .execute(db)?;
-    diesel::update(games::table.filter(games::black_id.eq(player1)))
-        .set(games::black_id.eq(player2))
-        .execute(db)?;
-
-    diesel::delete(players::table.filter(players::id.eq(player1))).execute(db)?;
-
-    core::refresh_info_counts(db)?;
-
-    Ok(())
+    write::merge_players(db, player1, player2)
 }
