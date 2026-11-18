@@ -1,19 +1,9 @@
-import { save } from "@tauri-apps/plugin-dialog";
 import { z } from "zod";
-import type { StoreApi } from "zustand";
 import { commands } from "@/bindings";
-import { fileMetadataSchema, invalidateFileIndex } from "@/features/files/utils/file";
+import { fileMetadataSchema } from "@/features/files/utils/file";
 import { serializeStorageValue } from "./tabStateStorage";
-import type { TreeStoreState } from "@/state/store/tree";
-import {
-    createFile,
-    getFileNameWithoutExtension,
-    isTempImportFile,
-    nowEpochSeconds,
-} from "@/utils/files";
 import { unwrap } from "@/utils/unwrap";
-import { getPGN, parsePGN } from "./chess";
-import { formatDateToPGN } from "./format";
+import { parsePGN } from "./chess";
 import { defaultTree, type GameHeaders, type TreeState } from "./treeReducer";
 
 const dbGameMetadataSchema = z.object({
@@ -152,109 +142,6 @@ export async function createTab({
     });
     setActiveTab(id);
     return id;
-}
-
-export async function saveToFile({
-    dir,
-    tab,
-    setCurrentTab,
-    store,
-}: {
-    dir: string;
-    tab: Tab | undefined;
-    setCurrentTab: React.Dispatch<React.SetStateAction<Tab>>;
-    store: StoreApi<TreeStoreState>;
-}) {
-    let filePath: string;
-    if (tab?.source?.type === "file" && !isTempImportFile(tab?.source?.path)) {
-        filePath = tab.source.path;
-    } else {
-        const userChoice = await save({
-            defaultPath: `${dir}/analyze-game-${formatDateToPGN(new Date())}.pgn`,
-            filters: [
-                {
-                    name: "PGN",
-                    extensions: ["pgn"],
-                },
-            ],
-        });
-        if (userChoice === null) return;
-        // On Linux the dialog filter doesn't append the extension.
-        filePath = /\.pgn$/i.test(userChoice) ? userChoice : `${userChoice}.pgn`;
-        const fileName = await getFileNameWithoutExtension(filePath);
-        if (tab?.source?.type === "file" && isTempImportFile(tab?.source?.path)) {
-            const count = unwrap(await commands.countPgnGames(tab?.source?.path ?? ""));
-            const games = unwrap(await commands.readGames(tab?.source?.path ?? "", 0, count - 1));
-            const pgn = games.join("");
-            await createFile({
-                filename: fileName,
-                filetype: "game",
-                pgn,
-                dir: dir,
-            });
-        }
-        setCurrentTab((prev) => {
-            return {
-                ...prev,
-                source: {
-                    ...(prev.source ?? {
-                        type: "file",
-                        numGames: 1,
-                        metadata: { type: "game", tags: [] },
-                    }),
-                    name: fileName,
-                    path: filePath,
-                    lastModified: nowEpochSeconds(),
-                },
-            };
-        });
-    }
-    unwrap(
-        await commands.writeGame(
-            filePath,
-            tab?.gameNumber || 0,
-            `${getPGN(store.getState().root, {
-                headers: store.getState().headers,
-                comments: true,
-                extraMarkups: true,
-                glyphs: true,
-                variations: true,
-            })}\n\n`,
-        ),
-    );
-    invalidateFileIndex();
-    store.getState().save();
-}
-
-export async function saveTab(tab: Tab, store: StoreApi<TreeStoreState>) {
-    if (tab.source?.type === "file") {
-        // Generate PGN from the tree state
-        // This should correctly handle variations for both regular and variants files
-        const pgn = `${getPGN(store.getState().root, {
-            headers: store.getState().headers,
-            comments: true,
-            extraMarkups: true,
-            glyphs: true,
-            variations: true,
-        })}\n\n`;
-
-        unwrap(await commands.writeGame(tab.source.path, tab?.gameNumber || 0, pgn));
-        invalidateFileIndex();
-    } else if (tab.source?.type === "db") {
-        const headers = store.getState().headers;
-        const moves = `${getPGN(store.getState().root, {
-            headers: headers,
-            comments: true,
-            extraMarkups: true,
-            glyphs: true,
-            variations: true,
-        })}\n\n`;
-
-        await commands.updateGame(tab.source.db, tab.source.id, {
-            ...headers,
-            moves,
-        });
-    }
 }
 
 export async function reloadTab(tab: Tab): Promise<TreeState | undefined> {

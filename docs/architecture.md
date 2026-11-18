@@ -12,6 +12,8 @@ Backend code lives in `src-tauri/src/`. Tauri commands should stay thin: validat
 
 Frontend state is owned by React components, hooks, stores, and tab/session helpers. It should model current UI intent: active board, selected game, command availability, pending form state, and visible progress.
 
+Saving a board tab goes through `save(tabId, { dir })` in `src/state/tabSession.ts`, which looks up the tab's tree store by id (`registerTabStore`; an unmounted tab's store is rehydrated from session storage). It writes to the tab's file, updates its database game, or opens a save-as dialog (no file, or a temp import file), then clears the tab's dirty flag and records a save-as file as the tab's source. A failed write rejects and leaves the tab dirty; a cancelled dialog resolves `"cancelled"`.
+
 Backend state is stored in `AppState` and related Rust services. It owns shared engine process maps, database connection pools, caches, and long-running job state. Backend state should include stable identifiers for processes or jobs so events can be routed back to the correct frontend surface.
 
 ## Tauri Command Flow
