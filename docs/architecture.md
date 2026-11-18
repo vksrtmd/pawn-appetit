@@ -38,9 +38,10 @@ Long-running database operations should report progress through typed events and
 
 ## Test Commands
 
-Use these commands from the repository root:
+`pnpm check` runs all of them in order, frontend first, and is what CI runs. Use these commands from the repository root:
 
 ```sh
+pnpm check
 pnpm test
 pnpm lint
 pnpm fmt:check
