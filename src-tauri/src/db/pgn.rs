@@ -178,7 +178,16 @@ impl GameTree {
 
 impl std::fmt::Display for GameTree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.pretty_print(f, None) {
+        self.from_position(None).fmt(f)
+    }
+}
+
+/// A game tree printed from a given start position (`None`: the standard one).
+pub struct FromPosition<'a>(&'a GameTree, Option<Chess>);
+
+impl std::fmt::Display for FromPosition<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0.pretty_print(f, self.1.clone()) {
             Ok(()) => Ok(()),
             Err(Error::Fmt(err)) => Err(err),
             Err(_) => {
@@ -186,6 +195,13 @@ impl std::fmt::Display for GameTree {
                 Ok(())
             }
         }
+    }
+}
+
+impl GameTree {
+    /// The tree as movetext whose first move is played from `start`.
+    pub fn from_position(&self, start: Option<Chess>) -> FromPosition<'_> {
+        FromPosition(self, start)
     }
 }
 

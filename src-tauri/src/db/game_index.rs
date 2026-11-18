@@ -347,6 +347,24 @@ fn write_info_i32(conn: &mut SqliteConnection, key: &str, value: i32) -> Result<
     Ok(())
 }
 
+/// Recomputes the index row of one edited game, so position search still
+/// finds it. A game past the index's coverage is left for the next build, and
+/// so is a database with no usable index.
+pub fn reindex_game(conn: &mut SqliteConnection, id: i32) -> Result<()> {
+    if id > indexed_up_to(conn) {
+        return Ok(());
+    }
+    let (moves, fen): (Vec<u8>, Option<String>) = games::table
+        .filter(games::id.eq(id))
+        .select((games::moves, games::fen))
+        .first(conn)?;
+    let masks = PieceMasks::from_moves(&moves, fen.as_deref())?;
+    diesel::replace_into(game_index::table)
+        .values(NewGameIndex::new(id, masks.to_signed()))
+        .execute(conn)?;
+    Ok(())
+}
+
 /// Build (or resume building) the piece-square index for a database.
 ///
 /// The build is incremental: it starts from the highest game already covered,
