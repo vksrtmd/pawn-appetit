@@ -1,7 +1,7 @@
 use std::{
-    fs::{File, OpenOptions},
+    fs::File,
     io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
 
 use crate::{error::Error, AppState};
@@ -37,6 +37,35 @@ impl CommentTracker {
     }
 }
 
+/// Finds where one game ends and the next begins. Blank and `%` escape lines
+/// before the first header belong to no game.
+#[derive(Default)]
+struct GameSplitter {
+    comments: CommentTracker,
+    /// A header or movetext line has been seen in the current game.
+    any: bool,
+    /// A non-header line has been seen after a header (or movetext without one).
+    body: bool,
+}
+
+impl GameSplitter {
+    /// Feeds one line; returns true when it is the first header of a new game.
+    fn feed(&mut self, line: &str) -> bool {
+        if self.comments.feed(line) {
+            let boundary = self.body;
+            self.body = false;
+            self.any = true;
+            return boundary;
+        }
+        let t = line.trim();
+        if self.any || (!t.is_empty() && !t.starts_with('%')) {
+            self.any = true;
+            self.body = true;
+        }
+        false
+    }
+}
+
 struct PgnParser {
     reader: BufReader<File>,
     line: String,
@@ -60,74 +89,80 @@ impl PgnParser {
         self.reader.stream_position()
     }
 
-    fn offset_by_index(&mut self, n: usize, state: &AppState, file: &str) -> io::Result<()> {
-        let offset_index = n / GAME_OFFSET_FREQ;
-        let n_left = n % GAME_OFFSET_FREQ;
+    /// The one offset scan: reads the whole file from the start and returns
+    /// the number of games and the byte offset of every `GAME_OFFSET_FREQ`th
+    /// game.
+    fn scan_offsets(&mut self) -> io::Result<(usize, Vec<u64>)> {
+        self.reader.seek(SeekFrom::Start(self.start))?;
+        let mut offsets = Vec::new();
+        let mut count = 0;
+        loop {
+            let skipped = self.skip_games(GAME_OFFSET_FREQ)?;
+            count += skipped;
+            if skipped < GAME_OFFSET_FREQ {
+                break;
+            }
+            offsets.push(self.position()?);
+        }
+        Ok((count, offsets))
+    }
 
-        if let Some(pgn_offsets) = state.pgn_offsets.get(file) {
-            let offset = if offset_index == 0 {
-                self.start
-            } else if offset_index <= pgn_offsets.len() {
-                pgn_offsets[offset_index - 1]
-            } else {
-                // If offset_index is out of bounds, start from beginning
+    /// Positions the reader at the start of game `n`, scanning the file for
+    /// offsets when none are stored for it.
+    fn offset_by_index(&mut self, n: usize, state: &AppState, file: &str) -> io::Result<()> {
+        if !state.pgn_offsets.contains_key(file) {
+            let (_, offsets) = self.scan_offsets()?;
+            state.pgn_offsets.insert(file.to_string(), offsets);
+        }
+        let offset_index = n / GAME_OFFSET_FREQ;
+        let stored = state.pgn_offsets.get(file).and_then(|o| {
+            offset_index
+                .checked_sub(1)
+                .map_or(Some(self.start), |i| o.get(i).copied())
+        });
+        match stored {
+            Some(offset) => {
+                self.reader.seek(SeekFrom::Start(offset))?;
+                self.skip_games(n % GAME_OFFSET_FREQ)?;
+            }
+            None => {
                 self.reader.seek(SeekFrom::Start(self.start))?;
                 self.skip_games(n)?;
-                return Ok(());
-            };
-
-            self.reader.seek(SeekFrom::Start(offset))?;
-            self.skip_games(n_left)?;
-        } else {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                "PGN offsets not found for file",
-            ));
+            }
         }
-
         Ok(())
     }
 
-    /// Skip n games, and return the number of bytes read
+    /// Skips up to n games and returns how many it skipped. Stops at the first
+    /// header of the next game, or at the end of the file.
     fn skip_games(&mut self, n: usize) -> io::Result<usize> {
         if n == 0 {
             return Ok(0);
         }
 
-        let mut new_game = false;
-        let mut skipped = 0;
         let mut count = 0;
-        let mut line = String::new();
-        let mut comments = CommentTracker::default();
-
+        let mut splitter = GameSplitter::default();
         loop {
-            line.clear();
-            let bytes = self.reader.read_line(&mut line)?;
-            skipped += bytes;
-
+            self.line.clear();
+            let bytes = self.reader.read_line(&mut self.line)?;
             if bytes == 0 {
-                break;
-            }
-
-            if comments.feed(&line) {
-                if new_game {
+                if splitter.any {
                     count += 1;
-                    if count == n {
-                        self.reader.seek(SeekFrom::Current(-(bytes as i64)))?;
-                        break;
-                    }
-                    new_game = false;
                 }
-            } else {
-                new_game = true;
+                return Ok(count);
+            }
+            if splitter.feed(&self.line) {
+                count += 1;
+                if count == n {
+                    self.reader.seek_relative(-(bytes as i64))?;
+                    return Ok(count);
+                }
             }
         }
-        Ok(skipped)
     }
 
     fn read_game(&mut self) -> io::Result<String> {
-        let mut new_game = false;
-        let mut comments = CommentTracker::default();
+        let mut splitter = GameSplitter::default();
         self.game.clear();
         self.line.clear();
 
@@ -136,15 +171,10 @@ impl PgnParser {
             if bytes == 0 {
                 break;
             }
-
-            if comments.feed(&self.line) {
-                if new_game {
-                    break;
-                }
-            } else {
-                new_game = true;
+            if splitter.feed(&self.line) {
+                self.reader.seek_relative(-(bytes as i64))?;
+                break;
             }
-
             self.game.push_str(&self.line);
             self.line.clear();
         }
@@ -162,54 +192,67 @@ fn ignore_bom(reader: &mut BufReader<File>) -> io::Result<u64> {
     Ok(3)
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn count_pgn_games(
-    file: PathBuf,
-    state: tauri::State<'_, AppState>,
-) -> Result<i32, Error> {
-    let files_string = file.to_string_lossy().to_string();
-
-    let file = File::open(&file)?;
-
-    let mut parser = PgnParser::new(file.try_clone()?);
-
-    let mut offsets = Vec::new();
-
-    let mut count = 0;
-
-    while let Ok(skipped) = parser.skip_games(1) {
-        if skipped == 0 {
-            break;
-        }
-        count += 1;
-        if count % GAME_OFFSET_FREQ as i32 == 0 {
-            let cur_pos = parser.position()?;
-            offsets.push(cur_pos);
-        }
+/// Writes a new version of `file` through `fill` into a temp file in the same
+/// folder, syncs it and renames it over the original, so a failure leaves the
+/// original untouched.
+fn rewrite_atomic(file: &Path, fill: impl FnOnce(&mut File) -> io::Result<()>) -> io::Result<()> {
+    let dir = match file.parent() {
+        Some(d) if !d.as_os_str().is_empty() => d,
+        _ => Path::new("."),
+    };
+    let mut tmp = tempfile::NamedTempFile::new_in(dir)?;
+    fill(tmp.as_file_mut())?;
+    tmp.as_file().sync_all()?;
+    if let Ok(meta) = std::fs::metadata(file) {
+        tmp.as_file().set_permissions(meta.permissions())?;
     }
+    tmp.persist(file).map_err(|e| e.error)?;
+    Ok(())
+}
 
-    state.pgn_offsets.insert(files_string, offsets);
+/// Replaces game `n` with `replacement`, or removes it when `None`.
+fn splice_game(
+    file: &Path,
+    n: usize,
+    replacement: Option<&str>,
+    state: &AppState,
+) -> io::Result<()> {
+    if !file.exists() {
+        File::create(file)?;
+    }
+    let mut parser = PgnParser::new(File::open(file)?);
+    parser.offset_by_index(n, state, file.to_string_lossy().as_ref())?;
+    let game_start = parser.position()?;
+    parser.skip_games(1)?;
+
+    let result = rewrite_atomic(file, |out| {
+        let mut src = File::open(file)?;
+        io::copy(&mut (&mut src).take(game_start), out)?;
+        if let Some(pgn) = replacement {
+            out.write_all(pgn.as_bytes())?;
+        }
+        io::copy(&mut parser.reader, out)?;
+        Ok(())
+    });
+    // Offsets after the changed game moved; the next lookup rescans.
+    state.pgn_offsets.remove(file.to_string_lossy().as_ref());
+    result
+}
+
+fn count_games(file: &Path, state: &AppState) -> io::Result<usize> {
+    let mut parser = PgnParser::new(File::open(file)?);
+    let (count, offsets) = parser.scan_offsets()?;
+    state
+        .pgn_offsets
+        .insert(file.to_string_lossy().to_string(), offsets);
     Ok(count)
 }
 
-#[tauri::command]
-#[specta::specta]
-pub async fn read_games(
-    file: PathBuf,
-    start: i32,
-    end: i32,
-    state: tauri::State<'_, AppState>,
-) -> Result<Vec<String>, Error> {
-    let file_r = File::open(&file)?;
-    let file_str = file.to_string_lossy();
-    let mut parser = PgnParser::new(file_r);
+fn read_range(file: &Path, start: usize, end: usize, state: &AppState) -> io::Result<Vec<String>> {
+    let mut parser = PgnParser::new(File::open(file)?);
+    parser.offset_by_index(start, state, file.to_string_lossy().as_ref())?;
 
-    parser.offset_by_index(start as usize, &state, &file_str)?;
-
-    let capacity = (end - start + 1).max(0) as usize;
-    let mut games: Vec<String> = Vec::with_capacity(capacity);
-
+    let mut games = Vec::with_capacity((end + 1).saturating_sub(start));
     for _ in start..=end {
         let game = parser.read_game()?;
         if game.is_empty() {
@@ -222,34 +265,32 @@ pub async fn read_games(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn count_pgn_games(
+    file: PathBuf,
+    state: tauri::State<'_, AppState>,
+) -> Result<i32, Error> {
+    Ok(count_games(&file, &state)? as i32)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn read_games(
+    file: PathBuf,
+    start: i32,
+    end: i32,
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<String>, Error> {
+    Ok(read_range(&file, start as usize, end as usize, &state)?)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn delete_game(
     file: PathBuf,
     n: i32,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), Error> {
-    let file_r = File::open(&file)?;
-
-    let mut parser = PgnParser::new(file_r.try_clone()?);
-
-    parser.offset_by_index(n as usize, &state, file.to_string_lossy().as_ref())?;
-
-    let starting_bytes = parser.position()?;
-
-    parser.skip_games(1)?;
-
-    let mut file_w = OpenOptions::new().write(true).open(file)?;
-
-    file_w.seek(SeekFrom::Start(starting_bytes))?;
-
-    write_to_end(&mut parser.reader, &mut file_w)?;
-    Ok(())
-}
-
-fn write_to_end<R: Read>(reader: &mut R, writer: &mut File) -> io::Result<()> {
-    io::copy(reader, writer)?;
-    let end = writer.stream_position()?;
-    writer.set_len(end)?;
-    Ok(())
+    Ok(splice_game(&file, n as usize, None, &state)?)
 }
 
 #[tauri::command]
@@ -260,32 +301,7 @@ pub async fn write_game(
     pgn: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), Error> {
-    if !file.exists() {
-        File::create(&file)?;
-    }
-
-    let file_r = File::open(&file)?;
-    let mut file_w = OpenOptions::new().write(true).open(&file)?;
-
-    let mut tmpf = tempfile::tempfile()?;
-    io::copy(&mut file_r.try_clone()?, &mut tmpf)?;
-
-    let mut parser = PgnParser::new(file_r.try_clone()?);
-
-    parser.offset_by_index(n as usize, &state, file.to_string_lossy().as_ref())?;
-
-    tmpf.seek(SeekFrom::Start(parser.position()?))?;
-    tmpf.write_all(pgn.as_bytes())?;
-
-    parser.skip_games(1)?;
-
-    write_to_end(&mut parser.reader, &mut tmpf)?;
-
-    tmpf.seek(SeekFrom::Start(0))?;
-
-    write_to_end(&mut tmpf, &mut file_w)?;
-
-    Ok(())
+    Ok(splice_game(&file, n as usize, Some(&pgn), &state)?)
 }
 
 #[cfg(test)]
@@ -305,11 +321,7 @@ mod tests {
 
     fn count(content: &str) -> usize {
         let mut p = parser(content);
-        let mut n = 0;
-        while p.skip_games(1).unwrap() != 0 {
-            n += 1;
-        }
-        n
+        p.scan_offsets().unwrap().0
     }
 
     fn read_first(content: &str) -> String {
@@ -361,5 +373,95 @@ mod tests {
         let g = "[Event \"A {\"]\n\n1. e4 e5 *\n\n";
         let both = format!("{g}{SECOND}");
         assert_eq!(count(&both), 2);
+    }
+
+    fn games(n: usize) -> String {
+        (0..n)
+            .map(|i| format!("[Event \"G{i}\"]\n[Site \"S\"]\n\n1. e4 e5 {{c{i}}} *\n\n"))
+            .collect()
+    }
+
+    fn game_n(i: usize) -> String {
+        games(i + 1).split_off(games(i).len())
+    }
+
+    fn pgn_file(content: &str) -> (tempfile::TempDir, PathBuf) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.pgn");
+        std::fs::write(&path, content).unwrap();
+        (dir, path)
+    }
+
+    #[test]
+    fn writes_game_zero_to_a_file_never_counted() {
+        let (_d, path) = pgn_file("");
+        let state = AppState::default();
+        splice_game(&path, 0, Some(&game_n(0)), &state).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), game_n(0));
+    }
+
+    #[test]
+    fn reads_from_a_file_never_counted() {
+        let (_d, path) = pgn_file(&games(250));
+        let got = read_range(&path, 150, 150, &AppState::default()).unwrap();
+        assert_eq!(got, vec![game_n(150)]);
+    }
+
+    #[test]
+    fn delete_then_read_and_save_hit_the_right_game_in_300() {
+        let (_d, path) = pgn_file(&games(300));
+        let state = AppState::default();
+        assert_eq!(count_games(&path, &state).unwrap(), 300);
+        splice_game(&path, 5, None, &state).unwrap();
+        // Game 150 now is the original game 151.
+        assert_eq!(
+            read_range(&path, 150, 150, &state).unwrap(),
+            vec![game_n(151)]
+        );
+        let replacement = "[Event \"New\"]\n\n1. d4 *\n\n";
+        splice_game(&path, 150, Some(replacement), &state).unwrap();
+        let mut expected: Vec<String> = (0..300).map(game_n).collect();
+        expected.remove(5);
+        expected[150] = replacement.to_string();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), expected.concat());
+        assert_eq!(count_games(&path, &state).unwrap(), 299);
+    }
+
+    #[test]
+    fn a_failed_rewrite_leaves_the_original_and_no_temp_file() {
+        let original = games(3);
+        let (dir, path) = pgn_file(&original);
+        let err = rewrite_atomic(&path, |out| {
+            out.write_all(b"partial")?;
+            Err(io::Error::other("disk full"))
+        });
+        assert!(err.is_err());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn a_file_starting_with_a_blank_line_counts_one_game_and_game_zero_is_it() {
+        for lead in ["\n", "%escape\n\n"] {
+            let g = format!("{lead}{}", game_n(0));
+            assert_eq!(count(&g), 1);
+            let (_d, path) = pgn_file(&g);
+            let state = AppState::default();
+            assert_eq!(read_range(&path, 0, 0, &state).unwrap(), vec![g.clone()]);
+            splice_game(&path, 0, Some("[Event \"N\"]\n\n*\n\n"), &state).unwrap();
+            assert_eq!(count_games(&path, &state).unwrap(), 1);
+        }
+    }
+
+    #[test]
+    fn games_after_the_first_keep_their_first_header_line() {
+        let (_d, path) = pgn_file(&games(3));
+        let got = read_range(&path, 0, 2, &AppState::default()).unwrap();
+        assert_eq!(got, vec![game_n(0), game_n(1), game_n(2)]);
+    }
+
+    #[test]
+    fn counts_header_only_games_separately() {
+        assert_eq!(count("[A \"1\"]\n\n[A \"2\"]\n\n"), 2);
     }
 }
