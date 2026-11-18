@@ -56,6 +56,7 @@ import GameInfo from "@/components/GameInfo";
 import MoveControls from "@/components/MoveControls";
 import EngineSettingsForm from "@/components/panels/analysis/EngineSettingsForm";
 import TimeInput from "@/components/TimeInput";
+import { readTree } from "@/state/tabSession";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import {
@@ -73,16 +74,10 @@ import type { TimeControlField } from "@/utils/clock";
 import { getDocumentDir } from "@/utils/documentDir";
 import { type LocalEngine, syncSelectedEngine } from "@/utils/engines";
 import { createFile } from "@/utils/files";
-import { deserializeStorageValue } from "@/utils/tabStateStorage";
 import { formatDateToPGN } from "@/utils/format";
 import { type GameRecord, saveGameRecord } from "@/utils/gameRecords";
 import { createTab } from "@/utils/tabs";
-import {
-  type GameHeaders,
-  type TreeNode,
-  type TreeState,
-  treeIteratorMainLine,
-} from "@/utils/treeReducer";
+import { type GameHeaders, type TreeNode, treeIteratorMainLine } from "@/utils/treeReducer";
 import {
   buildEngineGameHeaders,
   copyTimeControl,
@@ -1181,69 +1176,62 @@ function BoardGame() {
       // Get the PGN and FEN initial from the newly created tab
       // The tab stores its state in sessionStorage with the tab ID
       try {
-        const tabStateJson = sessionStorage.getItem(newTabId);
-        if (tabStateJson) {
-          const tabState = deserializeStorageValue<{ version: number; state: TreeState }>(
-            tabStateJson,
-          );
-          if (tabState?.state) {
-            const treeState = tabState.state;
+        const treeState = readTree(newTabId);
+        if (treeState) {
+          // Get PGN from the tree state using getPGN
+          const tabPgn = getPGN(treeState.root, {
+            headers: treeState.headers,
+            comments: true,
+            extraMarkups: true,
+            glyphs: true,
+            variations: true,
+          });
 
-            // Get PGN from the tree state using getPGN
-            const tabPgn = getPGN(treeState.root, {
-              headers: treeState.headers,
-              comments: true,
-              extraMarkups: true,
-              glyphs: true,
-              variations: true,
-            });
+          // Get initial FEN from the tree state root
+          const tabInitialFen = treeState.root?.fen || treeState.headers?.fen;
 
-            // Get initial FEN from the tree state root
-            const tabInitialFen = treeState.root?.fen || treeState.headers?.fen;
+          // Get the last node for final FEN
+          const mainLine = Array.from(treeIteratorMainLine(treeState.root));
+          const lastNode = mainLine[mainLine.length - 1].node;
 
-            // Get the last node for final FEN
-            const mainLine = Array.from(treeIteratorMainLine(treeState.root));
-            const lastNode = mainLine[mainLine.length - 1].node;
+          // Get UCI moves for the moves array (for backward compatibility)
+          const uciMoves = getMainLine(treeState.root, treeState.headers?.variant === "Chess960");
 
-            // Get UCI moves for the moves array (for backward compatibility)
-            const uciMoves = getMainLine(treeState.root, treeState.headers?.variant === "Chess960");
+          // Use current result or "*" if game was stopped early
+          const gameResult =
+            treeState.headers?.result && treeState.headers.result !== "*"
+              ? treeState.headers.result
+              : "*";
 
-            // Use current result or "*" if game was stopped early
-            const gameResult =
-              treeState.headers?.result && treeState.headers.result !== "*"
-                ? treeState.headers.result
-                : "*";
+          // Save the game record with PGN and initial FEN from the tab
+          const record: GameRecord = {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            white: {
+              type: players.white.type,
+              name:
+                players.white.type === "human" ? players.white.name : players.white.engine?.name,
+              engine: players.white.type === "engine" ? players.white.engine?.path : undefined,
+            },
+            black: {
+              type: players.black.type,
+              name:
+                players.black.type === "human" ? players.black.name : players.black.engine?.name,
+              engine: players.black.type === "engine" ? players.black.engine?.path : undefined,
+            },
+            result: gameResult,
+            timeControl:
+              treeState.headers?.time_control ||
+              `${treeState.headers?.white_time_control || ""},${treeState.headers?.black_time_control || ""}`,
+            timestamp: Date.now(),
+            moves: uciMoves, // UCI moves for backward compatibility
+            variant: treeState.headers?.variant ?? undefined,
+            fen: lastNode.fen, // Final FEN position
+            initialFen: tabInitialFen !== INITIAL_FEN ? tabInitialFen : undefined, // Initial FEN from tab
+            pgn: tabPgn, // Full PGN from tab
+          };
 
-            // Save the game record with PGN and initial FEN from the tab
-            const record: GameRecord = {
-              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              white: {
-                type: players.white.type,
-                name:
-                  players.white.type === "human" ? players.white.name : players.white.engine?.name,
-                engine: players.white.type === "engine" ? players.white.engine?.path : undefined,
-              },
-              black: {
-                type: players.black.type,
-                name:
-                  players.black.type === "human" ? players.black.name : players.black.engine?.name,
-                engine: players.black.type === "engine" ? players.black.engine?.path : undefined,
-              },
-              result: gameResult,
-              timeControl:
-                treeState.headers?.time_control ||
-                `${treeState.headers?.white_time_control || ""},${treeState.headers?.black_time_control || ""}`,
-              timestamp: Date.now(),
-              moves: uciMoves, // UCI moves for backward compatibility
-              variant: treeState.headers?.variant ?? undefined,
-              fen: lastNode.fen, // Final FEN position
-              initialFen: tabInitialFen !== INITIAL_FEN ? tabInitialFen : undefined, // Initial FEN from tab
-              pgn: tabPgn, // Full PGN from tab
-            };
-
-            // Save the game record
-            await saveGameRecord(record);
-          }
+          // Save the game record
+          await saveGameRecord(record);
         }
       } catch {
         // Failed to get data from tab, skip saving

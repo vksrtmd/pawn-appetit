@@ -10,7 +10,6 @@ import { unwrap } from "@/utils/unwrap";
 import { parsePGN } from "./chess";
 import { notifyPgnParseError } from "./pgnParseError";
 import { recordRecentFile } from "./recentFiles";
-import { serializeStorageValue } from "./tabStateStorage";
 import { createTab, type Tab } from "./tabs";
 import { getGameName } from "./treeReducer";
 
@@ -84,7 +83,7 @@ export async function openFile(
         throw e;
     }
 
-    const tabId = await createTab({
+    await createTab({
         tab: {
             name: getGameName(firstGameTree?.headers) || "Multiple Games",
             type: "analysis",
@@ -93,11 +92,8 @@ export async function openFile(
         setActiveTab,
         srcInfo: fileInfo,
         gameNumber: 0,
+        tree: firstGameTree,
     });
-
-    // Store the first game's state in session storage (for backward compatibility)
-    // The analysis board will handle multiple games through the pgn content
-    sessionStorage.setItem(tabId, serializeStorageValue({ version: 0, state: firstGameTree }));
     return true;
 }
 

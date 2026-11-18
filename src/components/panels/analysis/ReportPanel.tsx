@@ -15,6 +15,7 @@ import { saveAnalyzedGame } from "@/utils/analyzedGames";
 import { ANNOTATION_INFO, annotationColors, isBasicAnnotation } from "@/utils/annotation";
 import { getGameStats, getMainLine, getPGN } from "@/utils/chess";
 import { updateGameRecord } from "@/utils/gameRecords";
+import { getSideKey } from "@/state/tabSession";
 import { label } from "./AnalysisPanel.css";
 import ReportModal from "./ReportModal";
 import { shouldShowAccuracy } from "./reportSettings";
@@ -162,9 +163,7 @@ function ReportPanel() {
 
           // Check if this tab is associated with a local game
           const localGameId =
-            typeof window !== "undefined"
-              ? sessionStorage.getItem(`${activeTab}_localGameId`)
-              : null;
+            typeof window !== "undefined" ? getSideKey(activeTab, "localGameId") : null;
 
           if (localGameId) {
             // Update the GameRecord with the new PGN that includes evaluations
@@ -176,13 +175,9 @@ function ReportPanel() {
           } else {
             // Check if this tab is associated with a Chess.com or Lichess game
             const chessComGameUrl =
-              typeof window !== "undefined"
-                ? sessionStorage.getItem(`${activeTab}_chessComGameUrl`)
-                : null;
+              typeof window !== "undefined" ? getSideKey(activeTab, "chessComGameUrl") : null;
             const lichessGameId =
-              typeof window !== "undefined"
-                ? sessionStorage.getItem(`${activeTab}_lichessGameId`)
-                : null;
+              typeof window !== "undefined" ? getSideKey(activeTab, "lichessGameId") : null;
 
             if (chessComGameUrl) {
               // Save analyzed PGN for Chess.com game

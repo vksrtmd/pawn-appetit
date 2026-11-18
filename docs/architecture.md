@@ -16,6 +16,8 @@ Saving a board tab goes through `save(tabId, { dir })` in `src/state/tabSession.
 
 Backend state is stored in `AppState` and related Rust services. It owns shared engine process maps, database connection pools, caches, and long-running job state. Backend state should include stable identifiers for processes or jobs so events can be routed back to the correct frontend surface.
 
+Everything stored under a tab id belongs to the same module: the persisted tree (`open(tabId, tree)` writes it before the tab is added to the tab list, so the board's first render shows it), the side keys that tie a tab to a local, Chess.com or Lichess game (`getSideKey`/`setSideKey`), and the per-tab atoms. `duplicate(tabId)` copies the tree, source and side keys. `dispose(tabId)` removes the tree, side keys, missing-moves entry and per-tab atoms and calls `commands.killEngines(tabId)`; every way of closing a tab (`closeActiveTab`, `closeOtherTabs`, `closeTabsToRight`, `closeAllTabs`, the close button, replacing the lone "new" tab in `createTab`) disposes the tabs it removes. A per-tab atom is declared with `tabAtomFamily` (`src/state/tabAtoms.ts`), which registers it so `dispose` can remove it. `src/state/__tests__/tabAtoms.test.ts` fails when other code declares a per-tab atom family or touches a tab's session-storage keys.
+
 ## Tauri Command Flow
 
 Commands are registered in `src-tauri/src/lib.rs` through the Specta/Tauri builder and exposed to TypeScript bindings during debug desktop builds. Frontend code invokes commands through the generated bindings. Backend commands emit typed events for progress and async results when a single command response is not enough.

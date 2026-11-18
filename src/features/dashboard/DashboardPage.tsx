@@ -48,6 +48,7 @@ import { PuzzleStatsCard } from "./components/PuzzleStatsCard";
 import { QuickActionsGrid } from "./components/QuickActionsGrid";
 import { type Suggestion, SuggestionsCard } from "./components/SuggestionsCard";
 import { UserProfileCard } from "./components/UserProfileCard";
+import { setSideKey } from "@/state/tabSession";
 import { WelcomeCard } from "./components/WelcomeCard";
 import { getChessTitle } from "./utils/chessTitle";
 import {
@@ -720,7 +721,7 @@ export default function DashboardPage() {
               }).then((tabId) => {
                 // Store the gameId in sessionStorage so we can update it when analysis completes
                 if (tabId && typeof window !== "undefined") {
-                  sessionStorage.setItem(`${tabId}_localGameId`, game.id);
+                  setSideKey(tabId, "localGameId", game.id);
                 }
               });
               navigate({ to: "/boards" });
@@ -740,7 +741,7 @@ export default function DashboardPage() {
                 }).then((tabId) => {
                   // Store the game URL in sessionStorage so we can save the analyzed PGN when analysis completes
                   if (tabId && typeof window !== "undefined") {
-                    sessionStorage.setItem(`${tabId}_chessComGameUrl`, game.url);
+                    setSideKey(tabId, "chessComGameUrl", game.url);
                   }
                 });
                 navigate({ to: "/boards" });
@@ -761,7 +762,7 @@ export default function DashboardPage() {
                 }).then((tabId) => {
                   // Store the game ID in sessionStorage so we can save the analyzed PGN when analysis completes
                   if (tabId && typeof window !== "undefined") {
-                    sessionStorage.setItem(`${tabId}_lichessGameId`, game.id);
+                    setSideKey(tabId, "lichessGameId", game.id);
                   }
                 });
                 navigate({ to: "/boards" });
