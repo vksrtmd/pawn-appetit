@@ -1,8 +1,10 @@
 import { expect, test } from "vitest";
+import type { BestMovesPayload } from "@/bindings";
 import {
     buildEngineGameHeaders,
     copyTimeControl,
     engineGoMode,
+    engineMoveFromPayload,
     engineExtraOptions,
     type EngineOpponent,
     type PlayerSettings,
@@ -83,4 +85,44 @@ test("same time control copies the time units along with the time", () => {
         timeUnit: "s",
         incrementUnit: "ms",
     });
+});
+
+const topLine = {
+    nodes: 1,
+    depth: 1,
+    score: { value: { type: "cp" as const, value: 10 }, wdl: null },
+    uciMoves: ["e2e4"],
+    sanMoves: ["e4"],
+    multipv: 1,
+    nps: 1,
+};
+
+function payload(overrides: Partial<BestMovesPayload>): BestMovesPayload {
+    return {
+        bestLines: [topLine],
+        engine: "white",
+        tab: "t",
+        fen: "f",
+        moves: [],
+        progress: 100,
+        bestmove: null,
+        ...overrides,
+    };
+}
+
+test("an engine game plays the engine's bestmove, not its top line", () => {
+    expect(engineMoveFromPayload(payload({ bestmove: "d2d4" }))).toEqual({ from: 11, to: 27 });
+});
+
+test("a depth-limited search yields one move: only the final payload is a move", () => {
+    const events = [
+        payload({ progress: 50 }),
+        payload({ progress: 99.99 }),
+        payload({ progress: 100, bestmove: "e2e4" }),
+    ];
+    expect(events.map(engineMoveFromPayload).filter(Boolean)).toHaveLength(1);
+});
+
+test("an empty final result plays nothing and does not throw", () => {
+    expect(engineMoveFromPayload(payload({ bestLines: [], bestmove: null }))).toBeUndefined();
 });

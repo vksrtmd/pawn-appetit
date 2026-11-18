@@ -26,7 +26,7 @@ When adding or changing a command, update the Rust command signature, regenerate
 
 ## Engine Lifecycle
 
-Engine binaries are installed and launched by Rust code. The backend starts UCI processes, sends setup and search commands, reads engine output, and emits analysis or play-session updates to the frontend. The frontend should treat engines as asynchronous services and render readiness, searching, stopped, and failure states explicitly.
+Engine binaries are installed and launched by Rust code. The backend starts UCI processes, sends setup and search commands, reads engine output, and emits analysis or play-session updates to the frontend. The frontend should treat engines as asynchronous services and render readiness, searching, stopped, and failure states explicitly. A search ends only with the engine's `bestmove`: the final `BestMovesPayload` (progress 100, every earlier one stays below) carries it, and engine games play it. `stop` is followed by `isready`; the `bestmove` of the stopped search is ignored, and the engine takes a new search once it answers `readyok`.
 
 Every UCI process lives in the `EngineRegistry` (`src-tauri/src/chess/registry.rs`), under the key `(tab id, engine path)`. Live analysis, engine games and Game Review all start engines through `get_or_start`: overlapping starts for one key share one process, and a process that is killed while it is still starting is dropped (and so killed) before it is handed out.
 
