@@ -1,4 +1,5 @@
 import { Badge, Box, Button, Group, Paper, Stack, Text } from "@mantine/core";
+import { PgnParseError } from "@/utils/pgnParseError";
 import { useForceUpdate } from "@mantine/hooks";
 import {
   IconChevronRight,
@@ -254,17 +255,23 @@ function Table({
   const openFile = useCallback(
     async (record: FileMetadata) => {
       const pgn = unwrap(await commands.readGames(record.path, 0, 0));
-      createTab({
-        tab: {
-          name: record?.name || "Untitled",
-          type: "analysis",
-        },
-        setTabs,
-        setActiveTab,
-        pgn: pgn[0] || "",
-        srcInfo: record,
-        gameNumber: 0,
-      });
+      try {
+        await createTab({
+          tab: {
+            name: record?.name || "Untitled",
+            type: "analysis",
+          },
+          setTabs,
+          setActiveTab,
+          pgn: pgn[0] || "",
+          srcInfo: record,
+          gameNumber: 0,
+        });
+      } catch (e) {
+        // the parse error was shown; no tab was opened
+        if (e instanceof PgnParseError) return;
+        throw e;
+      }
       navigate({ to: "/boards" });
     },
     [setActiveTab, setTabs, navigate],

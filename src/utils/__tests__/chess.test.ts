@@ -1,10 +1,12 @@
 import { parseSquare } from "chessops";
 import { describe, expect, test, vi } from "vitest";
 import type { Token } from "@/bindings";
+import { commands } from "@/bindings";
 import { createNode, defaultTree } from "@/utils/treeReducer";
 import { ANNOTATION_INFO, type Annotation, NAG_INFO } from "@/utils/annotation";
 import {
     getMoveDestination,
+    getPGN,
     getPgnHeaders,
     getVariationLine,
     hasMorePriority,
@@ -196,4 +198,53 @@ test("variation line stops at the last existing move for a stale path", () => {
     ];
 
     expect(getVariationLine(root, [0, 3])).toEqual(["e2e4"]);
+});
+
+// A lexer as the Rust one behaves: header values and comment text come back raw
+function lexRaw(pgn: string) {
+    const tokens: Token[] = [];
+    const re = /\[(\w+) "((?:[^"\\]|\\.)*)"\]|\{([^}]*)\}|(\S+)/g;
+    for (const m of pgn.matchAll(re)) {
+        if (m[1]) tokens.push({ type: "Header", value: { tag: m[1], value: m[2] } });
+        else if (m[3] !== undefined) tokens.push({ type: "Comment", value: m[3] });
+        else if (m[4] === "*") tokens.push({ type: "Outcome", value: "*" });
+        else tokens.push({ type: "San", value: m[4] });
+    }
+    return { status: "ok" as const, data: tokens };
+}
+
+describe("parsePGN refuses to truncate", () => {
+    test("an illegal move at ply 20 is an error, not a shortened game", async () => {
+        const legal =
+            "e4 e5 Nf3 Nc6 Bb5 a6 Ba4 Nf6 O-O Be7 Re1 b5 Bb3 d6 c3 O-O h3 Nb8 d4 Nbd7".split(" ");
+        expect(legal).toHaveLength(20);
+        await expect(parsePGN([...legal.slice(0, 19), "Qh8", "Nf3"].join(" "))).rejects.toThrow(
+            /pgnParse/,
+        );
+    });
+});
+
+describe("PGN text that would break the format survives write then parse", () => {
+    test("a comment with } and a header with a quote and backslash", async () => {
+        const tree = defaultTree();
+        tree.headers.white = 'Sm"ith \\ Jr';
+        tree.headers.other = { Annotator: 'a "b" \\' };
+        const e4 = parseSquare("e2");
+        expect(e4).toBeDefined();
+        tree.root.comment = "set {a} and \\} too";
+        const pgn = getPGN(tree.root, {
+            headers: tree.headers,
+            glyphs: true,
+            comments: true,
+            variations: true,
+            extraMarkups: true,
+        });
+        vi.mocked(commands.lexPgn).mockImplementationOnce(async (p) => lexRaw(p));
+
+        const back = await parsePGN(pgn);
+
+        expect(back.headers.white).toBe('Sm"ith \\ Jr');
+        expect(back.headers.other?.Annotator).toBe('a "b" \\');
+        expect(back.root.comment).toBe("set {a} and \\} too");
+    });
 });

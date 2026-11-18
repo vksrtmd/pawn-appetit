@@ -8,6 +8,7 @@ import { commands } from "@/bindings";
 import { invalidateFileIndex, type FileMetadata } from "@/features/files/utils/file";
 import { unwrap } from "@/utils/unwrap";
 import { parsePGN } from "./chess";
+import { notifyPgnParseError } from "./pgnParseError";
 import { recordRecentFile } from "./recentFiles";
 import { serializeStorageValue } from "./tabStateStorage";
 import { createTab, type Tab } from "./tabs";
@@ -39,7 +40,7 @@ export async function openFile(
     file: string,
     setTabs: React.Dispatch<React.SetStateAction<Tab[]>>,
     setActiveTab: React.Dispatch<React.SetStateAction<string | null>>,
-) {
+): Promise<boolean> {
     const count = unwrap(await commands.countPgnGames(file));
     const firstGame = unwrap(await commands.readGames(file, 0, 0))[0];
     if (!firstGame) {
@@ -74,7 +75,14 @@ export async function openFile(
     // Parse only the first game for session storage
     // For variants files, parse as normal PGN (with variations) but display in variants view
     // Don't use isVariantsMode for parsing - that's only for special PGNs where all sequences are variations
-    const firstGameTree = await parsePGN(firstGame);
+    let firstGameTree: Awaited<ReturnType<typeof parsePGN>>;
+    try {
+        firstGameTree = await parsePGN(firstGame);
+    } catch (e) {
+        // Nothing is opened: no tab, no truncated tree
+        if (notifyPgnParseError(e)) return false;
+        throw e;
+    }
 
     const tabId = await createTab({
         tab: {
@@ -90,6 +98,7 @@ export async function openFile(
     // Store the first game's state in session storage (for backward compatibility)
     // The analysis board will handle multiple games through the pgn content
     sessionStorage.setItem(tabId, serializeStorageValue({ version: 0, state: firstGameTree }));
+    return true;
 }
 
 export async function openFileAndRemember(
@@ -97,8 +106,7 @@ export async function openFileAndRemember(
     setTabs: React.Dispatch<React.SetStateAction<Tab[]>>,
     setActiveTab: React.Dispatch<React.SetStateAction<string | null>>,
 ) {
-    await openFile(file, setTabs, setActiveTab);
-    recordRecentFile(file);
+    if (await openFile(file, setTabs, setActiveTab)) recordRecentFile(file);
 }
 
 export async function createFile({
