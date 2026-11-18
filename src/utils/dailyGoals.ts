@@ -1,6 +1,6 @@
 import { useUserStatsStore } from "@/state/userStatsStore";
 import { countGamesOnDate } from "./gameRecords";
-import { getTodayPuzzleCount } from "./puzzleStreak";
+import { dateKey, getTodayPuzzleCount } from "./puzzleStreak";
 
 export type DailyGoal = {
     id: string;
@@ -13,9 +13,9 @@ export async function getDailyGoals(): Promise<DailyGoal[]> {
     const todayPuzzles = getTodayPuzzleCount();
 
     const { userStats } = useUserStatsStore.getState();
-    const todayISO = new Date().toISOString().slice(0, 10);
+    const today = dateKey();
     const todayPracticeCompletions = (userStats.completionDates || []).filter(
-        (d: string) => d.slice(0, 10) === todayISO,
+        (d: string) => dateKey(new Date(d)) === today,
     ).length;
 
     const gamesToday = await countGamesOnDate();

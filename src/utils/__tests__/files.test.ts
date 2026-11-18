@@ -32,6 +32,7 @@ vi.mock("@/bindings", () => ({
 }));
 
 vi.mock("@/features/files/utils/file", () => ({
+    infoPathFor: (path: string) => path.replace(/\.pgn$/, ".info"),
     invalidateFileIndex: vi.fn<() => void>(),
 }));
 

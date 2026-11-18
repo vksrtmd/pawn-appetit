@@ -5,7 +5,7 @@ import { exists, mkdir, readTextFile, writeTextFile } from "@tauri-apps/plugin-f
 import { platform } from "@tauri-apps/plugin-os";
 import { defaultGame, makePgn } from "chessops/pgn";
 import { commands } from "@/bindings";
-import { invalidateFileIndex, type FileMetadata } from "@/features/files/utils/file";
+import { infoPathFor, invalidateFileIndex, type FileMetadata } from "@/features/files/utils/file";
 import { unwrap } from "@/utils/unwrap";
 import { parsePGN } from "./chess";
 import { notifyPgnParseError } from "./pgnParseError";
@@ -126,7 +126,7 @@ export async function createFile({
     };
     await mkdir(dir, { recursive: true });
     await writeTextFile(file, pgn || makePgn(defaultGame()));
-    await writeTextFile(file.replace(".pgn", ".info"), JSON.stringify(metadata));
+    await writeTextFile(infoPathFor(file), JSON.stringify(metadata));
 
     const numGames = unwrap(await commands.countPgnGames(file));
     invalidateFileIndex(dir);
