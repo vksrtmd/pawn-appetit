@@ -47,7 +47,7 @@ pub fn set_info_value(conn: &mut SqliteConnection, name: &str, value: &str) -> R
 
 /// Writes the row counts of each table to the Info table. Players, events and
 /// sites include the "Unknown" placeholder row.
-pub fn refresh_info_counts(conn: &mut SqliteConnection) -> Result<()> {
+pub(super) fn refresh_info_counts(conn: &mut SqliteConnection) -> Result<()> {
     let counts = [
         ("GameCount", games::table.count().get_result::<i64>(conn)?),
         ("PlayerCount", players::table.count().get_result(conn)?),
@@ -102,22 +102,6 @@ pub fn db_counts(conn: &mut SqliteConnection) -> Result<DbCounts> {
     })
 }
 
-/// Removes players, events and sites no game references (keeping the
-/// "Unknown" row, ID 0) and refreshes the stored counts. Run after games are
-/// deleted, not after an edit.
-pub fn delete_orphaned_data(conn: &mut SqliteConnection) -> Result<()> {
-    conn.batch_execute(
-        "
-        DELETE FROM Players WHERE ID != 0 AND ID NOT IN (
-            SELECT WhiteID FROM Games UNION SELECT BlackID FROM Games
-        );
-        DELETE FROM Events WHERE ID != 0 AND ID NOT IN (SELECT EventID FROM Games);
-        DELETE FROM Sites WHERE ID != 0 AND ID NOT IN (SELECT SiteID FROM Games);
-        ",
-    )?;
-    refresh_info_counts(conn)
-}
-
 pub fn normalize_game(
     game: Game,
     white: Player,
@@ -162,7 +146,7 @@ pub fn normalize_game(
 }
 
 /// Creates a new game in the database, and returns the game's ID.
-pub fn add_game(conn: &mut SqliteConnection, game: NewGame) -> Result<Game> {
+pub(super) fn add_game(conn: &mut SqliteConnection, game: NewGame) -> Result<Game> {
     use crate::db::schema::games;
 
     Ok(diesel::insert_or_ignore_into(games::table)
@@ -183,7 +167,7 @@ pub fn get_game(conn: &mut SqliteConnection, id: i32) -> Result<NormalizedGame> 
     normalize_game(game, white, black, event, site)
 }
 
-pub fn update_game(conn: &mut SqliteConnection, id: i32, data: &UpdateGame) -> Result<()> {
+pub(super) fn update_game(conn: &mut SqliteConnection, id: i32, data: &UpdateGame) -> Result<()> {
     let mut reader = BufferedReader::new_cursor(&data.moves);
     let mut importer = Importer::new(None);
 
@@ -219,12 +203,6 @@ pub fn update_game(conn: &mut SqliteConnection, id: i32, data: &UpdateGame) -> R
         .execute(conn)?;
 
     Ok(())
-}
-
-pub fn remove_game(conn: &mut SqliteConnection, id: i32) -> Result<()> {
-    diesel::delete(games::table.filter(games::id.eq(id))).execute(conn)?;
-
-    delete_orphaned_data(conn)
 }
 
 #[cfg(test)]
@@ -344,22 +322,6 @@ pub(crate) mod tests {
             games::table.count().get_result::<i64>(&mut conn).unwrap(),
             0
         );
-    }
-
-    #[test]
-    fn removing_a_players_only_game_removes_player_event_site_and_updates_counts() {
-        let mut conn = test_db();
-        seed_game(&mut conn, "Alice", "Bob", "Open");
-        let gone = seed_game(&mut conn, "Carol", "Bob", "Cup");
-        remove_game(&mut conn, gone).unwrap();
-        let (p, e, s) = names(&mut conn);
-        assert_eq!(p, ["Unknown", "Alice", "Bob"]);
-        assert_eq!(e, ["Unknown", "Open"]);
-        assert_eq!(s, ["Unknown", "Open site"]);
-        assert_eq!(info_value(&mut conn, "GameCount").as_deref(), Some("1"));
-        assert_eq!(info_value(&mut conn, "PlayerCount").as_deref(), Some("3"));
-        assert_eq!(info_value(&mut conn, "EventCount").as_deref(), Some("2"));
-        assert_eq!(info_value(&mut conn, "SiteCount").as_deref(), Some("2"));
     }
 
     #[test]
