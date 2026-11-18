@@ -85,9 +85,20 @@ fn convert_fide_xml(dir: &Path) -> Result<Vec<FidePlayer>, Error> {
     let xml_path = dir.join(FIDE_XML);
     let players_list: PlayersList = from_reader(BufReader::new(File::open(&xml_path)?))?;
 
-    let mut out_file = BufWriter::new(File::create(dir.join("fide.bin"))?);
-    bincode::encode_into_std_write(&players_list.players, &mut out_file, config::standard())?;
-    out_file.flush()?;
+    let out_path = dir.join("fide.bin");
+    let part_path = dir.join("fide.bin.part");
+    let written = (|| -> Result<(), Error> {
+        let mut out_file = BufWriter::new(File::create(&part_path)?);
+        bincode::encode_into_std_write(&players_list.players, &mut out_file, config::standard())?;
+        out_file.flush()?;
+        out_file.get_ref().sync_all()?;
+        std::fs::rename(&part_path, &out_path)?;
+        Ok(())
+    })();
+    if let Err(e) = written {
+        let _ = remove_file(&part_path);
+        return Err(e);
+    }
 
     remove_file(&xml_path)?;
     Ok(players_list.players)
@@ -204,5 +215,17 @@ mod tests {
         assert_eq!(decoded[0].blitz_rating, None);
         assert_eq!(players[0].name, "Carlsen, Magnus");
         assert!(!dir.path().join(FIDE_XML).exists());
+    }
+
+    #[test]
+    fn failed_conversion_keeps_existing_fide_bin() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("fide.bin"), b"good").unwrap();
+        std::fs::write(dir.path().join(FIDE_XML), b"<playerslist><player>").unwrap();
+
+        assert!(convert_fide_xml(dir.path()).is_err());
+
+        assert_eq!(std::fs::read(dir.path().join("fide.bin")).unwrap(), b"good");
+        assert!(!dir.path().join("fide.bin.part").exists());
     }
 }

@@ -296,7 +296,10 @@ impl ArchiveKind {
 }
 
 /// Extracts into a scratch dir inside `target` (same filesystem, so the moves are renames), then
-/// moves each top-level entry over `target`. On an extraction error `target` is untouched.
+/// merges the tree into `target` file by file: only paths the archive contains are replaced, so
+/// archives that share a top-level folder (or a folder the user already uses) keep each other's
+/// files. A file where the archive has a directory, or the reverse, is an error, never deleted.
+/// On an extraction error `target` is untouched.
 pub fn extract_atomic(target: &Path, kind: ArchiveKind, data: Vec<u8>) -> Result<(), Error> {
     create_dir_all(target)?;
     let stage = tempfile::Builder::new()
@@ -309,19 +312,37 @@ pub fn extract_atomic(target: &Path, kind: ArchiveKind, data: Vec<u8>) -> Result
         ArchiveKind::TarGz => extract_tar_file(stage.path(), data, true)?,
     }
 
-    for entry in std::fs::read_dir(stage.path())? {
-        let entry = entry?;
-        let dest = target.join(entry.file_name());
-        if let Ok(meta) = dest.symlink_metadata() {
-            if meta.is_dir() {
-                std::fs::remove_dir_all(&dest)?;
-            } else {
-                std::fs::remove_file(&dest)?;
-            }
-        }
-        std::fs::rename(entry.path(), &dest)?;
-    }
+    merge_tree(stage.path(), target)
+}
 
+fn merge_tree(from: &Path, to: &Path) -> Result<(), Error> {
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let src = entry.path();
+        let dest = to.join(entry.file_name());
+        let existing = dest.symlink_metadata().ok();
+        if entry.file_type()?.is_dir() {
+            match existing {
+                None => std::fs::create_dir(&dest)?,
+                Some(meta) if meta.is_dir() => {}
+                Some(_) => {
+                    return Err(Error::PackageManager(format!(
+                        "Cannot extract directory over existing file: {}",
+                        dest.display()
+                    )))
+                }
+            }
+            merge_tree(&src, &dest)?;
+        } else {
+            if existing.is_some_and(|meta| meta.is_dir()) {
+                return Err(Error::PackageManager(format!(
+                    "Cannot extract file over existing directory: {}",
+                    dest.display()
+                )));
+            }
+            std::fs::rename(&src, &dest)?;
+        }
+    }
     Ok(())
 }
 
@@ -879,22 +900,77 @@ mod fs_tests {
     }
 
     #[test]
-    fn extract_atomic_replaces_existing_top_level_entries() {
+    fn extract_atomic_replaces_same_path_files_and_keeps_siblings() {
         let dir = tempdir().unwrap();
         std::fs::create_dir(dir.path().join("engine")).unwrap();
-        std::fs::write(dir.path().join("engine/stale.txt"), b"stale").unwrap();
+        std::fs::write(dir.path().join("engine/same.txt"), b"old").unwrap();
+        std::fs::write(dir.path().join("engine/sibling.txt"), b"sibling").unwrap();
         std::fs::write(dir.path().join("keep.txt"), b"keep").unwrap();
-        let archive = make_zip(&[("engine/new.txt", b"new", Some(0o100644))]);
+        let archive = make_zip(&[
+            ("engine/same.txt", b"new", Some(0o100644)),
+            ("engine/new.txt", b"new", Some(0o100644)),
+        ]);
 
         extract_atomic(dir.path(), ArchiveKind::Zip, archive).unwrap();
 
-        assert!(!dir.path().join("engine/stale.txt").exists());
-        assert_eq!(
-            std::fs::read(dir.path().join("engine/new.txt")).unwrap(),
-            b"new"
-        );
-        assert_eq!(std::fs::read(dir.path().join("keep.txt")).unwrap(), b"keep");
+        let read = |p: &str| std::fs::read(dir.path().join(p)).unwrap();
+        assert_eq!(read("engine/same.txt"), b"new");
+        assert_eq!(read("engine/new.txt"), b"new");
+        assert_eq!(read("engine/sibling.txt"), b"sibling");
+        assert_eq!(read("keep.txt"), b"keep");
         assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn extract_atomic_keeps_earlier_archive_sharing_a_top_level_folder() {
+        let dir = tempdir().unwrap();
+        let first = gzip(make_tar_entry("stockfish/a", EntryType::Regular, b"a"));
+        let second = gzip(make_tar_entry("stockfish/b", EntryType::Regular, b"b"));
+
+        extract_atomic(dir.path(), ArchiveKind::TarGz, first).unwrap();
+        extract_atomic(dir.path(), ArchiveKind::TarGz, second).unwrap();
+
+        assert_eq!(std::fs::read(dir.path().join("stockfish/a")).unwrap(), b"a");
+        assert_eq!(std::fs::read(dir.path().join("stockfish/b")).unwrap(), b"b");
+    }
+
+    #[test]
+    fn extract_atomic_keeps_existing_files_in_a_shared_top_level_folder() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("db")).unwrap();
+        std::fs::write(dir.path().join("db/x.db3"), b"user").unwrap();
+        let archive = make_zip(&[("db/other", b"o", Some(0o100644))]);
+
+        extract_atomic(dir.path(), ArchiveKind::Zip, archive).unwrap();
+
+        assert_eq!(std::fs::read(dir.path().join("db/x.db3")).unwrap(), b"user");
+        assert_eq!(std::fs::read(dir.path().join("db/other")).unwrap(), b"o");
+    }
+
+    #[test]
+    fn extract_atomic_refuses_to_replace_a_directory_with_a_file() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("engine/data")).unwrap();
+        std::fs::write(dir.path().join("engine/data/user.txt"), b"user").unwrap();
+        let archive = make_zip(&[("engine/data", b"file", Some(0o100644))]);
+
+        assert!(extract_atomic(dir.path(), ArchiveKind::Zip, archive).is_err());
+
+        assert_eq!(
+            std::fs::read(dir.path().join("engine/data/user.txt")).unwrap(),
+            b"user"
+        );
+    }
+
+    #[test]
+    fn extract_atomic_refuses_to_replace_a_file_with_a_directory() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("engine"), b"user").unwrap();
+        let archive = make_zip(&[("engine/new.txt", b"new", Some(0o100644))]);
+
+        assert!(extract_atomic(dir.path(), ArchiveKind::Zip, archive).is_err());
+
+        assert_eq!(std::fs::read(dir.path().join("engine")).unwrap(), b"user");
     }
 
     #[test]
