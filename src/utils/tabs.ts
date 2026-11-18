@@ -13,6 +13,7 @@ import {
 } from "@/utils/files";
 import { unwrap } from "@/utils/unwrap";
 import { getPGN, parsePGN } from "./chess";
+import { notifyPgnParseError } from "./pgnParseError";
 import { formatDateToPGN } from "./format";
 import { defaultTree, type GameHeaders, type TreeState } from "./treeReducer";
 
@@ -79,7 +80,7 @@ export async function createTab({
     if (pgn !== undefined) {
         // For variants files, parse as normal PGN (with variations) but display in variants view
         // Don't use isVariantsMode for parsing - that's only for special PGNs where all sequences are variations
-        const tree = await parsePGN(pgn, headers?.fen, false);
+        const tree = await parsePGN(pgn, headers?.fen, false).catch(rethrowNotified);
         // If headers are provided, only merge them if the parsed PGN headers are incomplete
         // This preserves complete headers from saved PGNs (like game.pgn) while allowing
         // updates for PGNs that were reconstructed from moves
@@ -257,6 +258,12 @@ export async function saveTab(tab: Tab, store: StoreApi<TreeStoreState>) {
     }
 }
 
+// A tab is created or reloaded only after its PGN parsed, so the error leaves nothing half-open
+function rethrowNotified(e: unknown): never {
+    notifyPgnParseError(e);
+    throw e;
+}
+
 export async function reloadTab(tab: Tab): Promise<TreeState | undefined> {
     let tree: TreeState | undefined;
 
@@ -265,11 +272,11 @@ export async function reloadTab(tab: Tab): Promise<TreeState | undefined> {
 
         // For variants files, parse as normal PGN (with variations) but display in variants view
         // Don't use isVariantsMode for parsing - that's only for special PGNs where all sequences are variations
-        tree = await parsePGN(game, undefined, false);
+        tree = await parsePGN(game, undefined, false).catch(rethrowNotified);
     } else if (tab.source?.type === "db") {
         const game = unwrap(await commands.getGame(tab.source.db, tab.source.id));
 
-        tree = await parsePGN(game.moves);
+        tree = await parsePGN(game.moves).catch(rethrowNotified);
         tree.headers = game;
     }
 

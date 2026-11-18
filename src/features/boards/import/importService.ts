@@ -7,6 +7,7 @@ import type { FileType } from "@/features/files/utils/file";
 import { parsePGN } from "@/utils/chess";
 import { getChesscomGame } from "@/utils/chess.com/api";
 import { chessopsError } from "@/utils/chessops";
+import { notifyPgnParseError } from "@/utils/pgnParseError";
 import { createFile, createTempImportFile, openFile } from "@/utils/files";
 import { getLichessGame } from "@/utils/lichess/api";
 import { parseMultiplePgnGames } from "@/utils/pgnUtils";
@@ -310,7 +311,10 @@ async function importLinkGame(
         };
     }
 
-    const tree = await parsePGN(pgn);
+    const tree = await parsePGN(pgn).catch((e) => {
+        notifyPgnParseError(e);
+        throw e;
+    });
     context.setCurrentTab((prev) => {
         sessionStorage.setItem(prev.value, serializeStorageValue({ version: 0, state: tree }));
         return {

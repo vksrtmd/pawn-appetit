@@ -16,6 +16,7 @@ import { match } from "ts-pattern";
 import { commands, type Outcome, type Score, type Token } from "@/bindings";
 import { ANNOTATION_INFO, type Annotation, isBasicAnnotation, NAG_INFO } from "./annotation";
 import { parseSanOrUci, positionFromFen } from "./chessops";
+import { PgnParseError } from "./pgnParseError";
 import { harmonicMean, isPrefix, mean } from "./misc";
 import { formatScore, getAccuracy, getCPLoss, INITIAL_SCORE } from "./score";
 import {
@@ -555,15 +556,6 @@ export async function getOpening(root: TreeNode, position: number[]): Promise<st
         return getOpening(root, position.slice(0, -1));
     }
     return res.data;
-}
-
-export class PgnParseError extends Error {
-    constructor(
-        readonly san: string,
-        readonly ply: number,
-    ) {
-        super(`pgnParse: illegal move "${san}" at ply ${ply}`);
-    }
 }
 
 function innerParsePGN(

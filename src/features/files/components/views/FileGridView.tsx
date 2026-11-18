@@ -1,4 +1,5 @@
 import { Badge, Box, Button, Group, Paper, SimpleGrid, Skeleton, Stack, Text } from "@mantine/core";
+import { PgnParseError } from "@/utils/pgnParseError";
 import {
   IconArrowsSplit,
   IconBook,
@@ -182,17 +183,23 @@ function FileCard({
 
   const openFile = async () => {
     const pgn = unwrap(await commands.readGames(file.path, 0, 0));
-    createTab({
-      tab: {
-        name: file.name || "Untitled",
-        type: "analysis",
-      },
-      setTabs,
-      setActiveTab,
-      pgn: pgn[0] || "",
-      srcInfo: file,
-      gameNumber: 0,
-    });
+    try {
+      await createTab({
+        tab: {
+          name: file.name || "Untitled",
+          type: "analysis",
+        },
+        setTabs,
+        setActiveTab,
+        pgn: pgn[0] || "",
+        srcInfo: file,
+        gameNumber: 0,
+      });
+    } catch (e) {
+      // the parse error was shown; no tab was opened
+      if (e instanceof PgnParseError) return;
+      throw e;
+    }
     navigate({ to: "/boards" });
   };
 
