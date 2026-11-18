@@ -5,6 +5,7 @@ import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { fetch } from "@tauri-apps/plugin-http";
 import { error, info } from "@tauri-apps/plugin-log";
 import { Chess } from "chessops";
+import { parseFen } from "chessops/fen";
 import { ChildNode, defaultGame, makePgn, type PgnNodeData } from "chessops/pgn";
 import { makeSan } from "chessops/san";
 import { z } from "zod";
@@ -99,6 +100,14 @@ export async function getChessComAccount(player: string): Promise<ChessComStats 
 async function getGameArchives(player: string) {
   const url = `${baseURL}/pub/player/${player}/games/archives`;
   const response = await fetch(url, { headers, method: "GET" });
+  if (!response.ok) {
+    error(`Failed to fetch Chess.com archives: ${response.status} ${response.url}`);
+    throw new Error(
+      response.status === 404
+        ? `Player "${player}" not found on chess.com`
+        : `Could not load the game archives for "${player}" from chess.com (HTTP ${response.status})`,
+    );
+  }
   return (await response.json()) as Archive;
 }
 
@@ -167,46 +176,47 @@ export async function fetchLastChessComGames(
 
 export async function downloadChessCom(player: string, timestamp: number | null) {
   const timestampDate = new Date(timestamp ?? 0);
-  const approximateDate = new Date(timestampDate.getFullYear(), timestampDate.getMonth(), 1);
+  // Archive months are UTC, so compare in UTC on both sides.
+  const approximateDate = Date.UTC(timestampDate.getUTCFullYear(), timestampDate.getUTCMonth(), 1);
   const archives = await getGameArchives(player);
   const file = await resolve(await appDataDir(), "db", `${player}_chesscom.pgn`);
   info(`Found ${archives.archives.length} archives for ${player}`);
-  writeTextFile(file, "", {
+  await writeTextFile(file, "", {
     append: false,
   });
   const filteredArchives = archives.archives.filter((archive) => {
     const [year, month] = archive.split("/").slice(-2);
-    const archiveDate = new Date(Number.parseInt(year, 10), Number.parseInt(month, 10) - 1);
-    return archiveDate >= approximateDate;
+    return (
+      Date.UTC(Number.parseInt(year, 10), Number.parseInt(month, 10) - 1, 1) >= approximateDate
+    );
   });
 
-  for (const archive of filteredArchives) {
+  for (const [index, archive] of filteredArchives.entries()) {
     info(`Fetching games for ${player} from ${archive}`);
     const response = await fetch(archive, {
       headers,
       method: "GET",
     });
-    const games = ChessComGames.safeParse(await response.json());
+    if (response.status === 404) {
+      error(`Chess.com archive not found: ${archive}`);
+      continue;
+    }
+    const games = response.ok ? ChessComGames.safeParse(await response.json()) : null;
 
-    if (!games.success) {
+    if (!games?.success) {
       error(`Failed to fetch Chess.com games: ${response.status} ${response.url}`);
-      notifications.show({
-        title: "Failed to fetch Chess.com games",
-        message: `Could not find games for "${player}" on chess.com for ${archive}`,
-        color: "red",
-        icon: <IconX />,
-      });
-      if (response.status === 404) continue;
-      return;
+      throw new Error(
+        `Could not download the chess.com games of "${player}" for ${archive.split("/").slice(-2).join("/")} (HTTP ${response.status})`,
+      );
     }
 
-    writeTextFile(file, games.data.games.map((g) => g.pgn).join("\n"), {
+    await writeTextFile(file, games.data.games.map((g) => g.pgn).join("\n"), {
       append: true,
     });
     events.downloadProgress.emit({
       finished: false,
       id: `chesscom_${player}`,
-      progress: (filteredArchives.indexOf(archive) / filteredArchives.length) * 100,
+      progress: (index / filteredArchives.length) * 100,
     });
   }
   events.downloadProgress.emit({
@@ -279,7 +289,7 @@ export async function getChesscomGame(gameURL: string) {
   const game = defaultGame<PgnNodeData>(
     () => new Map(Object.entries(pgnHeaders).map(([k, v]) => [k, v.toString()])),
   );
-  const chess = Chess.default();
+  const chess = startPosition(pgnHeaders);
 
   let lastNode = game.moves;
   for (const move of moves) {
@@ -294,6 +304,18 @@ export async function getChesscomGame(gameURL: string) {
   }
 
   return makePgn(game);
+}
+
+function startPosition(pgnHeaders: Record<string, string | number>) {
+  const fen = pgnHeaders.FEN;
+  if (typeof fen === "string" && (String(pgnHeaders.SetUp) === "1" || pgnHeaders.Variant)) {
+    const setup = parseFen(fen);
+    if (setup.isOk) {
+      const position = Chess.fromSetup(setup.value);
+      if (position.isOk) return position.value;
+    }
+  }
+  return Chess.default();
 }
 
 export function getStats(stats: ChessComStats) {
