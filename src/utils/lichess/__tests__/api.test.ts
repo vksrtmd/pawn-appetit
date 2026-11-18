@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { downloadLichess } from "../api";
+import { downloadLichess, getLichessGame } from "../api";
 
 const mocks = vi.hoisted(() => ({
+    fetch: vi.fn<(url: string) => Promise<Response>>(),
     downloadFile:
         vi.fn<
             (
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
         >(),
 }));
 
+vi.mock("@tauri-apps/plugin-http", () => ({ fetch: mocks.fetch }));
 vi.mock("@/bindings", () => ({ commands: { downloadFile: mocks.downloadFile } }));
 vi.mock("@tauri-apps/api/path", () => ({
     appDataDir: vi.fn<() => Promise<string>>(async () => "/data"),
@@ -41,5 +43,16 @@ describe("downloadLichess", () => {
             "dateAsc",
             "1700000000000",
         ]);
+    });
+});
+
+describe("getLichessGame", () => {
+    test("loads the game through the Tauri HTTP plugin", async () => {
+        mocks.fetch.mockResolvedValue(new Response("1. e4 *"));
+
+        const pgn = await getLichessGame("abcdefgh1234");
+
+        expect(mocks.fetch).toHaveBeenCalledWith("https://lichess.org/game/export/abcdefgh");
+        expect(pgn).toBe("1. e4 *");
     });
 });
