@@ -61,6 +61,10 @@ VITE_SERVER_URL=https://example.com/databases
 
 - Starts the app in development mode to see changes in real time
 
+`pnpm check`
+
+- Runs every check CI runs: formatting, lint, typecheck, frontend tests, then Rust formatting, Clippy and Rust tests. Run it before opening a pull request
+
 `pnpm test`
 
 - Runs frontend tests
