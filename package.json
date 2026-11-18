@@ -19,7 +19,6 @@
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "fmt:rust:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
-    "update-readme": "tsx scripts/update-readme.ts",
     "update-missing-translations": "tsx scripts/update-missing-translations.ts",
     "update-version": "tsx scripts/update-version.ts",
     "knip": "knip",
