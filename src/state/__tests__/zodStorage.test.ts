@@ -9,6 +9,14 @@ vi.mock("@tauri-apps/plugin-fs", () => ({
     remove: vi.fn<() => void>(),
 }));
 
+vi.mock("@tauri-apps/plugin-log", () => ({
+    error: vi.fn<() => void>(),
+    warn: vi.fn<() => void>(),
+    info: vi.fn<() => void>(),
+    debug: vi.fn<() => void>(),
+    trace: vi.fn<() => void>(),
+}));
+
 const schema = z.object({ n: z.number() });
 
 function memory(initial: Record<string, string>) {
