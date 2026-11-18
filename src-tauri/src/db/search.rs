@@ -38,6 +38,7 @@ use crate::{
     AppState, GameData,
 };
 
+use super::move_blob::MoveBlobCursor;
 use super::GameQueryJs;
 
 /// Data for exact position matching
@@ -360,148 +361,43 @@ pub struct PositionStats {
 /// Parses chess moves from binary format one at a time
 /// Avoids loading entire game tree into memory
 pub(super) struct MoveStream<'a> {
-    bytes: &'a [u8],
-    position: Chess,
-    index: usize,
+    cursor: MoveBlobCursor<'a>,
 }
 
 impl<'a> MoveStream<'a> {
-    // Binary format markers
-    const START_VARIATION: u8 = 254;
-    const END_VARIATION: u8 = 253;
-    const COMMENT: u8 = 252;
-    const NAG: u8 = 251;
-
     pub(super) fn new(bytes: &'a [u8], start_position: Chess) -> Self {
         Self {
-            bytes,
-            position: start_position,
-            index: 0,
+            cursor: MoveBlobCursor::new(bytes, start_position),
         }
     }
 
     /// The position after the moves consumed so far.
     pub(super) fn position(&self) -> &Chess {
-        &self.position
+        self.cursor.position()
     }
 
     /// Play the next main-line move, returning whether one was found.
     ///
     /// Unlike [`Self::next_move`] this neither clones the position nor builds
     /// SAN, so it is the cheap choice for callers that only need each board.
-    pub(super) fn advance(&mut self) -> bool {
-        while self.index < self.bytes.len() {
-            match self.bytes[self.index] {
-                Self::COMMENT => {
-                    if !self.skip_comment() {
-                        return false;
-                    }
-                }
-                Self::NAG => self.index += 2,
-                Self::START_VARIATION => self.skip_variation(),
-                Self::END_VARIATION => return false,
-                move_byte => {
-                    let legal_moves = self.position.legal_moves();
-                    let Some(chess_move) = legal_moves.get(move_byte as usize) else {
-                        return false;
-                    };
-                    self.position.play_unchecked(chess_move);
-                    self.index += 1;
-                    return true;
-                }
-            }
-        }
-
-        false
+    /// A malformed blob is an error, so callers can skip the whole game.
+    pub(super) fn advance(&mut self) -> Result<bool, Error> {
+        Ok(self.cursor.next_main_move()?.is_some())
     }
 
-    /// Skip a length-prefixed comment, returning false if it is truncated.
-    fn skip_comment(&mut self) -> bool {
-        if self.index + 8 >= self.bytes.len() {
-            return false;
-        }
-        let length_bytes = &self.bytes[self.index + 1..self.index + 9];
-        let Ok(length_array) = <[u8; 8]>::try_from(length_bytes) else {
-            return false;
-        };
-        self.index += 9 + u64::from_be_bytes(length_array) as usize;
-        true
-    }
-
-    /// Skip a whole variation, including any nested ones.
-    fn skip_variation(&mut self) {
-        let mut depth = 1;
-        self.index += 1;
-        while self.index < self.bytes.len() && depth > 0 {
-            match self.bytes[self.index] {
-                Self::START_VARIATION => depth += 1,
-                Self::END_VARIATION => depth -= 1,
-                _ => {}
+    pub(super) fn next_move(&mut self) -> Result<Option<PlayedMove>, Error> {
+        let before = self.cursor.position().clone();
+        Ok(self.cursor.next_main_move()?.map(|chess_move| {
+            // Read off the squares before playing: SanPlus consumes
+            // the move into the position and the origin is then gone.
+            let uci = UciMove::from_standard(&chess_move).to_string();
+            let mut played = before;
+            let san = SanPlus::from_move_and_play_unchecked(&mut played, &chess_move);
+            PlayedMove {
+                san: san.to_string(),
+                uci,
             }
-            self.index += 1;
-        }
-    }
-
-    pub(super) fn next_move(&mut self) -> Option<PlayedMove> {
-        while self.index < self.bytes.len() {
-            let byte = self.bytes[self.index];
-
-            match byte {
-                // Skip comments, annotations, and variations
-                Self::COMMENT => {
-                    if self.index + 8 >= self.bytes.len() {
-                        break;
-                    }
-                    let length_bytes = &self.bytes[self.index + 1..self.index + 9];
-                    if let Ok(length_array) = <[u8; 8]>::try_from(length_bytes) {
-                        let length = u64::from_be_bytes(length_array) as usize;
-                        self.index += 9 + length;
-                    } else {
-                        break;
-                    }
-                }
-                Self::NAG => {
-                    self.index += 2;
-                }
-                Self::START_VARIATION => {
-                    // Skip entire variation
-                    let mut depth = 1;
-                    self.index += 1;
-                    while self.index < self.bytes.len() && depth > 0 {
-                        match self.bytes[self.index] {
-                            Self::START_VARIATION => depth += 1,
-                            Self::END_VARIATION => depth -= 1,
-                            _ => {}
-                        }
-                        self.index += 1;
-                    }
-                }
-                Self::END_VARIATION => {
-                    break;
-                }
-                move_byte => {
-                    // Parse actual chess move
-                    // Get legal moves once instead of on every iteration
-                    let legal_moves = self.position.legal_moves();
-                    if let Some(chess_move) = legal_moves.get(move_byte as usize) {
-                        // Read off the squares before playing: SanPlus consumes
-                        // the move into the position and the origin is then gone.
-                        let uci = UciMove::from_standard(chess_move).to_string();
-                        let san =
-                            SanPlus::from_move_and_play_unchecked(&mut self.position, chess_move);
-                        let move_string = san.to_string();
-                        self.index += 1;
-                        return Some(PlayedMove {
-                            san: move_string,
-                            uci,
-                        });
-                    } else {
-                        break; // Invalid move
-                    }
-                }
-            }
-        }
-        None
+        }))
     }
 }
 
@@ -644,7 +540,7 @@ fn get_move_after_match(
         let matched = start_position.clone();
         let mut stream = MoveStream::new(move_blob, start_position);
         let (next_move, next_move_uci) = stream
-            .next_move()
+            .next_move()?
             .map(|played| (played.san, played.uci))
             .unwrap_or_else(|| ("*".to_string(), String::new()));
         return Ok(Some(PositionMatch {
@@ -663,7 +559,7 @@ fn get_move_after_match(
     // scanned game passes through here, and notation is only ever wanted for
     // the one position that matches. Building it eagerly costs a position
     // clone and two string allocations per ply, all of them discarded.
-    while stream.advance() {
+    while stream.advance()? {
         ply += 1;
         // Quick material check first
         let board = stream.position().board();
@@ -682,7 +578,7 @@ fn get_move_after_match(
         if query.matches(stream.position()) {
             let current_position = stream.position().clone();
             let (next_move, next_move_uci) = stream
-                .next_move()
+                .next_move()?
                 .map(|played| (played.san, played.uci))
                 .unwrap_or_else(|| ("*".to_string(), String::new()));
             return Ok(Some(PositionMatch {
@@ -1961,7 +1857,10 @@ mod index_filter_tests {
             };
             let mut stream = MoveStream::new(moves, start);
             for _ in 0..ply {
-                assert!(stream.advance(), "game ended before reported ply {ply}");
+                assert!(
+                    stream.advance().unwrap(),
+                    "game ended before reported ply {ply}"
+                );
             }
             assert!(
                 query.matches(stream.position()),
@@ -2368,6 +2267,26 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!((result.ply, result.next_move.as_str()), (0, "e4"));
+    }
+
+    #[test]
+    fn a_malformed_blob_is_an_error_for_that_game_not_a_miss() {
+        let query = PositionQuery::exact_from_fen(
+            "rnbqkbnr/pppp1ppp/8/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
+        )
+        .unwrap();
+        let mut huge = vec![12, 12, crate::db::move_blob::COMMENT];
+        huge.extend(u64::MAX.to_be_bytes());
+        for blob in [
+            vec![12, 12, crate::db::move_blob::NAG],
+            huge,
+            vec![12, 12, 200],
+        ] {
+            assert!(matches!(
+                get_move_after_match(&blob, &None, &query),
+                Err(Error::MalformedMoveBlob(_))
+            ));
+        }
     }
 }
 

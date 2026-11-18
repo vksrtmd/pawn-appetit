@@ -1,3 +1,4 @@
+use crate::db::move_blob::{Item, MoveBlobCursor, COMMENT, END_VARIATION, NAG, START_VARIATION};
 use crate::error::{Error, Result};
 use chrono::{NaiveDate, NaiveTime};
 use pgn_reader::{Nag, RawComment, RawHeader, SanPlus, Skip, Visitor};
@@ -27,11 +28,6 @@ pub enum GameTreeNode {
 pub struct GameTree(Vec<GameTreeNode>);
 
 impl GameTree {
-    const START_VARIATION: u8 = 254;
-    const END_VARIATION: u8 = 253;
-    const COMMENT: u8 = 252;
-    const NAG: u8 = 251;
-
     pub fn new() -> Self {
         GameTree::default()
     }
@@ -72,78 +68,61 @@ impl GameTree {
                     }
                 }
                 GameTreeNode::Nag(nag) => {
-                    bytes.push(Self::NAG);
+                    bytes.push(NAG);
                     bytes.push(nag.0);
                 }
                 GameTreeNode::Comment(comment) => {
-                    bytes.push(Self::COMMENT);
+                    bytes.push(COMMENT);
                     bytes.extend((comment.len() as u64).to_be_bytes());
                     bytes.extend(comment.as_bytes());
                 }
                 GameTreeNode::Variation(branch) => {
-                    bytes.push(Self::START_VARIATION);
+                    bytes.push(START_VARIATION);
                     branch.encode(bytes, Some(prev_position.clone()));
-                    bytes.push(Self::END_VARIATION);
+                    bytes.push(END_VARIATION);
                 }
             }
         }
     }
 
-    fn from_bytes_impl(mut bytes: &[u8], position: Chess) -> Result<(Vec<GameTreeNode>, &[u8])> {
-        let mut prev_position: Chess = position.clone();
-        let mut cur_position: Chess = position;
-        let mut tree: Vec<GameTreeNode> = Vec::new();
-
+    /// Read nodes until the end of the blob, or of the variation when `nested`.
+    fn read_branch(cursor: &mut MoveBlobCursor, nested: bool) -> Result<Vec<GameTreeNode>> {
+        let mut tree = Vec::new();
+        let mut prev = cursor.position().clone();
         loop {
-            match bytes.first().copied() {
-                Some(Self::NAG) => {
-                    tree.push(GameTreeNode::Nag(Nag(bytes[1])));
-                    bytes = &bytes[2..];
+            let before = cursor.position().clone();
+            let item = cursor.next_item()?;
+            match item {
+                None if nested => {
+                    return Err(Error::MalformedMoveBlob("unterminated variation".into()))
                 }
-                Some(Self::COMMENT) => {
-                    let length = u64::from_be_bytes(
-                        bytes[1..]
-                            .first_chunk::<8>()
-                            .ok_or(Error::InvalidBinaryData)?
-                            .to_owned(),
-                    ) as usize;
-                    tree.push(GameTreeNode::Comment(String::from_utf8(
-                        bytes[9..9 + length].to_owned(),
-                    )?));
-                    bytes = &bytes[9 + length..];
+                None | Some(Item::EndVariation) => return Ok(tree),
+                Some(Item::Nag(value)) => tree.push(GameTreeNode::Nag(Nag(value))),
+                Some(Item::Comment(text)) => {
+                    tree.push(GameTreeNode::Comment(String::from_utf8(text.to_owned())?))
                 }
-                Some(Self::END_VARIATION) => {
-                    bytes = &bytes[1..];
-                    break;
+                Some(Item::Move(m)) => {
+                    let mut played = before.clone();
+                    let san = SanPlus::from_move_and_play_unchecked(&mut played, &m);
+                    tree.push(GameTreeNode::Move(san));
+                    prev = before;
                 }
-                Some(Self::START_VARIATION) => {
-                    let (branch, rest) = Self::from_bytes_impl(&bytes[1..], prev_position.clone())?;
+                Some(Item::StartVariation) => {
+                    // The variation replaces the move just read, so it starts
+                    // from the position before it.
+                    let main_line = cursor.position().clone();
+                    cursor.set_position(prev.clone());
+                    let branch = Self::read_branch(cursor, true)?;
+                    cursor.set_position(main_line);
                     tree.push(GameTreeNode::Variation(GameTree(branch)));
-                    bytes = rest;
-                }
-                Some(byte) => {
-                    if let Some(m) = cur_position.legal_moves().get(byte as usize) {
-                        prev_position = cur_position.clone();
-                        let san = SanPlus::from_move_and_play_unchecked(&mut cur_position, m);
-                        tree.push(GameTreeNode::Move(san));
-                        bytes = &bytes[1..];
-                    } else {
-                        return Err(Error::InvalidBinaryData);
-                    }
-                }
-                None => {
-                    break;
                 }
             }
         }
-
-        Ok((tree, bytes))
     }
 
     pub fn from_bytes(bytes: &[u8], position: Option<Chess>) -> Result<Self> {
-        Ok(Self(
-            Self::from_bytes_impl(bytes, position.unwrap_or_default())?.0,
-        ))
+        let mut cursor = MoveBlobCursor::new(bytes, position.unwrap_or_default());
+        Ok(Self(Self::read_branch(&mut cursor, false)?))
     }
 
     pub fn pretty_print(
@@ -413,6 +392,23 @@ mod test {
     fn trim(s: &str) -> String {
         let re = Regex::new(r"\s+").unwrap();
         re.replace_all(s, " ").to_string()
+    }
+
+    #[test]
+    fn malformed_blobs_fail_to_decode_without_panicking() {
+        let mut huge = vec![12, COMMENT];
+        huge.extend(u64::MAX.to_be_bytes());
+        let mut past_end = vec![12, COMMENT];
+        past_end.extend(9u64.to_be_bytes());
+        for blob in [vec![12, NAG], huge, past_end, vec![12, 200]] {
+            assert!(
+                matches!(
+                    GameTree::from_bytes(&blob, None),
+                    Err(Error::MalformedMoveBlob(_))
+                ),
+                "{blob:?}"
+            );
+        }
     }
 
     #[test]
