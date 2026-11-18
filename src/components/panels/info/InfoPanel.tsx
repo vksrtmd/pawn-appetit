@@ -13,7 +13,7 @@ import { currentTabAtom, missingMovesAtom } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
 import { parsePGN } from "@/utils/chess";
 import { getTreeStats } from "@/utils/repertoire";
-import { saveToFile } from "@/utils/tabs";
+import { save } from "@/state/tabSession";
 import { getGameName, getNodeAtPath } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
 import FenSearch from "./FenSearch";
@@ -88,7 +88,6 @@ function GameSelectorAccordion({
   const setState = useStore(store, (s) => s.setState);
   const [currentTab, setCurrentTab] = useAtom(currentTabAtom);
   const setMissingMoves = useSetAtom(missingMovesAtom);
-  const [tempPage, setTempPage] = useState(0);
   const { documentDir } = useLoaderData({ from: "/boards" });
   const keyMap = useAtomValue(keyMapAtom);
 
@@ -98,7 +97,6 @@ function GameSelectorAccordion({
     if (currentTab?.source?.type !== "file") return;
 
     if (!forced && dirty) {
-      setTempPage(page);
       modals.openConfirmModal({
         title: t("common.unsavedChanges.title"),
         withCloseButton: false,
@@ -108,23 +106,16 @@ function GameSelectorAccordion({
           cancel: t("common.unsavedChanges.closeWithoutSaving"),
         },
         onConfirm: async () => {
-          if (currentTab) {
-            try {
-              await saveToFile({
-                dir: documentDir,
-                setCurrentTab,
-                tab: currentTab,
-                store,
-              });
-            } catch {
-              // The failed write was already reported; stay on this page so the edits survive.
-              return;
-            }
+          try {
+            if ((await save(currentTab.value, { dir: documentDir })) === "cancelled") return;
+          } catch {
+            // The failed write was already reported; stay on this page so the edits survive.
+            return;
           }
-          setPage(tempPage, true);
+          setPage(page, true);
         },
         onCancel: () => {
-          setPage(tempPage, true);
+          setPage(page, true);
         },
       });
       return;
