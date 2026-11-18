@@ -30,6 +30,8 @@ Each engine workflow should have one authoritative owner for the process, an ide
 
 Database work is currently organized under `src-tauri/src/db/` plus related import, PGN, puzzle, and search modules. Rust owns SQLite connections, schema access, game normalization, position search, and import/export work. Frontend code should request data through commands instead of reading database files directly.
 
+Every write to a game database goes through `src-tauri/src/db/write.rs`. A writer runs its SQL in `write::apply` with the kind of change it made (`Change::GamesInserted`, `GamesEdited`, `GamesDeleted`, `PlayersMerged`); in the same transaction `apply` refreshes the stored counts and, for edits, deletes and merges, removes players, events and sites no game references. The module takes a `SqliteConnection`, not app state. Writers don't call the count refresh or orphan sweep themselves.
+
 Long-running database operations should report progress through typed events and should avoid blocking UI workflows.
 
 ## Test Commands
