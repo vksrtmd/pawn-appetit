@@ -30,12 +30,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Type-check
-        run: pnpm typecheck
-
-      - name: Run tests
-        run: pnpm test
-
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -46,14 +40,5 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Check Rust formatting
-        run: pnpm fmt:rust:check
-
-      - name: Rust unit tests
-        run: pnpm test:rust
-
-      - name: Rust clippy
-        run: pnpm lint:rust
-
-      - name: Frontend lint
-        run: pnpm lint
+      - name: Check
+        run: pnpm check
