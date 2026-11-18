@@ -9,7 +9,7 @@
 use diesel::{connection::SimpleConnection, prelude::*};
 
 use super::{
-    core, game_index,
+    cache, core, game_index,
     models::{NewGame, UpdateGame},
     schema::{games, players},
 };
@@ -27,8 +27,20 @@ pub enum Change<'a> {
     GamesEdited(&'a [i32]),
     /// Games were deleted.
     GamesDeleted,
+    /// One game was deleted: only its own players, event and site can have
+    /// become orphans.
+    GameDeleted(DeletedGame),
     /// One player's games were moved to another and the player row removed.
     PlayersMerged,
+}
+
+/// The rows a deleted game referenced.
+#[derive(Debug, Clone, Copy)]
+pub struct DeletedGame {
+    white: i32,
+    black: i32,
+    event: i32,
+    site: i32,
 }
 
 /// Runs `write` and then what `change` owes, in one transaction.
@@ -37,15 +49,39 @@ pub fn apply<T>(
     change: Change<'_>,
     write: impl FnOnce(&mut SqliteConnection) -> Result<T>,
 ) -> Result<T> {
-    conn.transaction::<_, Error, _>(|conn| {
+    let out = conn.transaction::<_, Error, _>(|conn| {
         let out = write(conn)?;
         settle(conn, change)?;
         Ok(out)
-    })
+    })?;
+    // After the commit: a search that reads the file from here on sees the
+    // write, and one that read it earlier cannot store its rows (cache.rs).
+    if let Some(path) = database_file(conn) {
+        cache::invalidate(&path);
+    }
+    Ok(out)
 }
 
-/// The derived data a change owes. Later work adds its step here:
-/// - per-file cache invalidation (#150): runs for every change.
+#[allow(clippy::redundant_field_names)]
+/// The file `conn` is connected to; none for an in-memory database.
+fn database_file(conn: &mut SqliteConnection) -> Option<std::path::PathBuf> {
+    #[derive(QueryableByName)]
+    struct Attached {
+        #[diesel(sql_type = diesel::sql_types::Text)]
+        file: String,
+    }
+    let main: Vec<Attached> =
+        diesel::sql_query("SELECT file FROM pragma_database_list WHERE name = 'main'")
+            .load(conn)
+            .ok()?;
+    main.into_iter()
+        .next()
+        .filter(|a| !a.file.is_empty())
+        .map(|a| a.file.into())
+}
+
+/// The derived data a change owes inside the transaction. (The per-file
+/// cache invalidation runs in `apply`, once the transaction has committed.)
 fn settle(conn: &mut SqliteConnection, change: Change<'_>) -> Result<()> {
     match change {
         // A skipped duplicate can leave an orphan; sweeping every row of a
@@ -58,6 +94,7 @@ fn settle(conn: &mut SqliteConnection, change: Change<'_>) -> Result<()> {
             sweep_orphans(conn)?
         }
         Change::GamesDeleted | Change::PlayersMerged => sweep_orphans(conn)?,
+        Change::GameDeleted(game) => sweep_orphans_of(conn, game)?,
     }
     core::refresh_info_counts(conn)
 }
@@ -77,6 +114,33 @@ fn sweep_orphans(conn: &mut SqliteConnection) -> Result<()> {
     Ok(())
 }
 
+/// [`sweep_orphans`] for the rows one deleted game referenced.
+fn sweep_orphans_of(conn: &mut SqliteConnection, game: DeletedGame) -> Result<()> {
+    use diesel::sql_types::Integer;
+    diesel::sql_query(
+        "
+        DELETE FROM Players WHERE ID != 0 AND ID IN (?1, ?2)
+            AND NOT EXISTS (SELECT 1 FROM Games WHERE WhiteID = Players.ID OR BlackID = Players.ID);
+        ",
+    )
+    .bind::<Integer, _>(game.white)
+    .bind::<Integer, _>(game.black)
+    .execute(conn)?;
+    diesel::sql_query(
+        "DELETE FROM Events WHERE ID != 0 AND ID = ?1
+            AND NOT EXISTS (SELECT 1 FROM Games WHERE EventID = Events.ID)",
+    )
+    .bind::<Integer, _>(game.event)
+    .execute(conn)?;
+    diesel::sql_query(
+        "DELETE FROM Sites WHERE ID != 0 AND ID = ?1
+            AND NOT EXISTS (SELECT 1 FROM Games WHERE SiteID = Sites.ID)",
+    )
+    .bind::<Integer, _>(game.site)
+    .execute(conn)?;
+    Ok(())
+}
+
 /// Adds one game and returns its row. Bulk imports go through `apply` instead.
 #[allow(dead_code)]
 pub fn add_game(conn: &mut SqliteConnection, game: NewGame) -> Result<super::models::Game> {
@@ -92,7 +156,26 @@ pub fn update_game(conn: &mut SqliteConnection, id: i32, data: &UpdateGame) -> R
 }
 
 pub fn remove_game(conn: &mut SqliteConnection, id: i32) -> Result<()> {
-    apply(conn, Change::GamesDeleted, |conn| {
+    let row: Option<(i32, i32, i32, i32)> = games::table
+        .filter(games::id.eq(id))
+        .select((
+            games::white_id,
+            games::black_id,
+            games::event_id,
+            games::site_id,
+        ))
+        .first(conn)
+        .optional()?;
+    let Some((white, black, event, site)) = row else {
+        return Ok(());
+    };
+    let game = DeletedGame {
+        white,
+        black,
+        event,
+        site,
+    };
+    apply(conn, Change::GameDeleted(game), |conn| {
         diesel::delete(games::table.filter(games::id.eq(id))).execute(conn)?;
         Ok(())
     })
@@ -138,9 +221,11 @@ pub fn merge_players(conn: &mut SqliteConnection, player1: i32, player2: i32) ->
 }
 
 /// Removes the database file. The caller drops its pooled connection first.
-/// There is no connection to settle; #150's cache invalidation goes here.
+/// There is no connection to settle, so it clears the file's caches itself.
 pub fn drop_database(path: &std::path::Path) -> Result<()> {
+    cache::invalidate(path);
     std::fs::remove_file(path)?;
+    cache::invalidate(path);
     Ok(())
 }
 

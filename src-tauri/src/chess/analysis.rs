@@ -229,9 +229,9 @@ impl GameAnalysisService {
             if options.annotate_novelties && !novelty_found {
                 if let Some(reference) = options.reference_db.clone() {
                     analysis.novelty = !is_position_in_db(
+                        app.clone(),
                         reference,
                         GameQueryJs::new().position(query.clone()).clone(),
-                        state.clone(),
                     )
                     .await?;
                     if analysis.novelty {

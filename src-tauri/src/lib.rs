@@ -18,11 +18,11 @@ mod puzzle;
 mod sound;
 mod telemetry;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use chess::{BestMovesPayload, EngineRegistry, ReportProgress};
 use dashmap::DashMap;
-use db::{DatabaseProgress, GameQueryJs, NormalizedGame, PositionStats};
+use db::DatabaseProgress;
 use derivative::Derivative;
 use fide::FidePlayer;
 use oauth::AuthState;
@@ -76,9 +76,6 @@ pub type GameData = (
     Option<i32>,
 );
 
-type LineCacheKey = (GameQueryJs, std::path::PathBuf);
-type LineCacheValue = (Vec<PositionStats>, Vec<NormalizedGame>);
-
 #[derive(Derivative)]
 #[derivative(Default)]
 pub struct AppState {
@@ -86,11 +83,6 @@ pub struct AppState {
         String,
         diesel::r2d2::Pool<diesel::r2d2::ConnectionManager<diesel::SqliteConnection>>,
     >,
-    #[derivative(Default(
-        value = "Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(100).unwrap()))"
-    ))]
-    line_cache: Mutex<lru::LruCache<LineCacheKey, LineCacheValue>>,
-    db_cache: Mutex<Arc<Vec<GameData>>>,
     #[derivative(Default(value = "Arc::new(Semaphore::new(2))"))]
     new_request: Arc<Semaphore>,
     pgn_offsets: DashMap<String, Vec<u64>>,

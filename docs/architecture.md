@@ -40,6 +40,12 @@ Database work is currently organized under `src-tauri/src/db/` plus related impo
 
 Every write to a game database goes through `src-tauri/src/db/write.rs`. A writer runs its SQL in `write::apply` with the kind of change it made (`Change::GamesInserted`, `GamesEdited`, `GamesDeleted`, `PlayersMerged`); in the same transaction `apply` refreshes the stored counts and, for edits, deletes and merges, removes players, events and sites no game references. The module takes a `SqliteConnection`, not app state. Writers don't call the count refresh or orphan sweep themselves.
 
+Deleting one game (`Change::GameDeleted`) checks only that game's players, event and site for orphans; the other changes sweep every table.
+
+What position search keeps between calls lives in `db/cache.rs`, keyed by database file: the game rows of a small file (up to 50,000 games) and finished search results. After its transaction commits, `apply` calls `cache::invalidate` for the connection's file, and `write::drop_database` calls it too, so the next search reads the file as it is. Each file has a generation that `invalidate` bumps; a search stores rows or results only under the generation it read the file at. The Game Review novelty check (`position_in_db`) scans through the same batched, index-filtered path, stops at the first match and takes no search permit, so it runs beside panel searches.
+
+Each file's pool (`db/connection.rs`) always uses the safe settings (rollback journal, foreign keys on, busy timeout), opens connections on demand and upgrades the schema (end-time columns, the date-sort expression index) once, when the pool is created. The importer connects on its own with the fast import settings (`ConnectionOptions::import`) and never joins the pool. Long database commands run their blocking work on `spawn_blocking`.
+
 Long-running database operations should report progress through typed events and should avoid blocking UI workflows.
 
 ## Test Commands

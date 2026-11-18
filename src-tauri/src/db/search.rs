@@ -15,12 +15,14 @@ use specta::Type;
 use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap},
+    ops::ControlFlow,
     path::{Path, PathBuf},
     sync::Arc,
     time::Instant,
 };
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
+use crate::db::cache::{SearchResult, SEARCH_CACHE};
 use crate::db::game_index::IndexFilter;
 use crate::{
     db::{
@@ -29,7 +31,7 @@ use crate::{
         normalize_games,
         pgn::{get_material_count, MaterialCount},
         schema::*,
-        ConnectionOptions, GameSort, Sides, SortDirection,
+        GameSort, Sides, SortDirection,
     },
     error::Error,
     AppState, GameData,
@@ -224,7 +226,7 @@ fn exact_counts_cover_query(
 
 /// Convert JavaScript position query to internal format
 #[inline(always)]
-fn convert_position_query(query: PositionQueryJs) -> Result<PositionQuery, Error> {
+pub(super) fn convert_position_query(query: PositionQueryJs) -> Result<PositionQuery, Error> {
     match query.type_.as_str() {
         "exact" => PositionQuery::exact_from_fen(&query.fen),
         "partial" => {
@@ -614,8 +616,8 @@ pub struct ProgressPayload {
 }
 
 /// Get total number of games in database
-fn get_total_game_count(state: &tauri::State<'_, AppState>, file: &Path) -> Result<i64, Error> {
-    let db = &mut get_db_or_create(state, file.to_str().unwrap(), ConnectionOptions::default())?;
+fn get_total_game_count(state: &AppState, file: &Path) -> Result<i64, Error> {
+    let db = &mut get_db_or_create(state, file.to_str().unwrap())?;
     use diesel::dsl::count_star;
 
     let total_count: i64 = games::table.select(count_star()).first(db)?;
@@ -625,12 +627,12 @@ fn get_total_game_count(state: &tauri::State<'_, AppState>, file: &Path) -> Resu
 
 /// Load games from database in batches
 fn load_games_batch(
-    state: &tauri::State<'_, AppState>,
+    state: &AppState,
     file: &Path,
     offset: i64,
     limit: i64,
 ) -> Result<Vec<SearchGameRow>, Error> {
-    let db = &mut get_db_or_create(state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(state, file.to_str().unwrap())?;
 
     let games = games::table
         .select((
@@ -678,14 +680,14 @@ type SearchGameRow = (
 /// Keyset pagination rather than `OFFSET`, because a filtered scan would
 /// otherwise re-walk every skipped row on each batch.
 fn load_filtered_games_batch(
-    state: &tauri::State<'_, AppState>,
+    state: &AppState,
     file: &Path,
     after_id: i32,
     limit: i64,
     filter: Option<&str>,
     query: &GameQueryJs,
 ) -> Result<Vec<SearchGameRow>, Error> {
-    let db = &mut get_db_or_create(state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(state, file.to_str().unwrap())?;
 
     let mut sql_query = games::table
         .left_join(game_index::table)
@@ -845,7 +847,7 @@ enum GameCheck {
     Unreachable,
     /// Decoded, and the query never occurs (or the blob is malformed).
     Miss,
-    Hit(GameHit),
+    Hit(Box<GameHit>),
 }
 
 /// Check one game against the query: filters, then the cheap reachability
@@ -894,12 +896,12 @@ fn check_game(row: &GameData, query: &GameQueryJs, position: &PositionQuery) -> 
         Some("1/2-1/2") => entry.draw += 1,
         _ => (), // Unknown results don't count
     }
-    GameCheck::Hit(GameHit {
+    GameCheck::Hit(Box::new(GameHit {
         id: *id,
         rating: game_rating(*white_elo, *black_elo),
         entry,
         found,
-    })
+    }))
 }
 
 /// The result of checking some games; two of them merge into one.
@@ -990,229 +992,134 @@ fn calculate_batch_progress(processed: usize, total: usize) -> f64 {
     (processed as f64 / total as f64 * 100.0).min(100.0)
 }
 
-/// Search for chess positions in the database
-/// Returns position statistics and matching games
-#[tauri::command]
-#[specta::specta]
-pub async fn search_position(
-    file: PathBuf,
-    query: GameQueryJs,
-    app: tauri::AppHandle,
-    tab_id: String,
-    state: tauri::State<'_, AppState>,
-) -> Result<(Vec<PositionStats>, Vec<NormalizedGame>), Error> {
-    let start = Instant::now();
-    info!("Starting position search for tab: {}", tab_id);
+/// Games below this count are read into memory once and scanned from there.
+const CACHEABLE_GAMES: usize = 50_000;
+const BATCH_SIZE: i64 = 30000;
 
-    // Convert position query if present - do this first to validate the query
-    let position_query = match &query.position {
-        Some(pos_query) => {
-            info!("Processing position query with FEN: {}", pos_query.fen);
-            let converted = convert_position_query(pos_query.clone())?;
+/// Hands the games that can hold `position` to `visit`, in one slice when the
+/// file is small enough to keep in memory (and keeps them for the next
+/// search), else in index-filtered batches. `visit` stops the scan by
+/// returning `Break`; so does `cancelled` turning true.
+fn scan_games(
+    state: &AppState,
+    file: &Path,
+    query: &GameQueryJs,
+    position: &PositionQuery,
+    cancelled: &(impl Fn() -> bool + Sync),
+    progress: &dyn Fn(f64),
+    visit: impl FnMut(&[GameData]) -> ControlFlow<()>,
+) -> Result<(), Error> {
+    scan_games_in(
+        state,
+        file,
+        query,
+        position,
+        (CACHEABLE_GAMES, BATCH_SIZE),
+        cancelled,
+        progress,
+        visit,
+    )
+}
 
-            // Debug: Log target position material and pawn structure
-            match &converted {
-                PositionQuery::Exact(data) => {
-                    info!(
-                        "Target position (EXACT): material={:?}, pawn_home={}",
-                        data.material, data.pawn_home
-                    );
-                }
-                PositionQuery::Partial(data) => {
-                    info!("Target position (PARTIAL): material={:?}", data.material);
-                }
-            }
-
-            Some(converted)
-        }
-        None => return Err(Error::NoMatchFound), // Position search requires a position
-    };
-
-    let position_query = position_query.unwrap();
-
-    // Cache management with LRU
-    const DISABLE_CACHE: bool = false;
-
-    if !DISABLE_CACHE {
-        let cache_key = (query.clone(), file.clone());
-
-        // Return cached results if available
-        // LRU cache automatically updates access order on get()
-        let mut cache = state.line_cache.lock().unwrap();
-        if let Some(cached_result) = cache.get(&cache_key) {
-            info!(
-                "Using cached results: {} stats, {} games",
-                cached_result.0.len(),
-                cached_result.1.len()
-            );
-            return Ok(cached_result.clone());
-        }
-        // LRU cache automatically evicts least recently used entries when capacity is reached
-        // No need for manual size checking and clearing
+/// [`scan_games`] with the in-memory limit and batch size given.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn scan_games_in(
+    state: &AppState,
+    file: &Path,
+    query: &GameQueryJs,
+    position: &PositionQuery,
+    (cacheable_games, batch_size): (usize, i64),
+    cancelled: &(impl Fn() -> bool + Sync),
+    progress: &dyn Fn(f64),
+    mut visit: impl FnMut(&[GameData]) -> ControlFlow<()>,
+) -> Result<(), Error> {
+    let generation = SEARCH_CACHE.generation(file);
+    let mut rows = SEARCH_CACHE.rows(file);
+    if rows.is_none() && get_total_game_count(state, file)? as usize <= cacheable_games {
+        let all = Arc::new(load_games_batch(state, file, 0, i64::MAX)?);
+        SEARCH_CACHE.store_rows(file, generation, all.clone());
+        rows = Some(all);
+    }
+    if let Some(rows) = rows {
+        let _ = visit(&rows);
+        return Ok(());
     }
 
-    // Handle request cancellation
-    let permit = state.new_request.acquire().await.unwrap();
-    if state.new_request.available_permits() == 0 {
-        drop(permit);
+    // Reject games that cannot hold the query before reading their moves.
+    let (index_filter, max_game_id) = {
+        let db = &mut get_db_or_create(state, file.to_str().unwrap())?;
+        let up_to = crate::db::game_index::indexed_up_to(db);
+        let max_id: Option<i32> = games::table.select(diesel::dsl::max(games::id)).first(db)?;
+        (position.index_filter(up_to).to_sql(), max_id.unwrap_or(0))
+    };
+    let mut cursor = 0i32;
+    loop {
+        if cancelled() {
+            return Err(Error::SearchStopped);
+        }
+        let batch = load_filtered_games_batch(
+            state,
+            file,
+            cursor,
+            batch_size,
+            index_filter.as_deref(),
+            query,
+        )?;
+        let Some((last_id, ..)) = batch.last() else {
+            return Ok(());
+        };
+        cursor = *last_id;
+        if visit(&batch).is_break() {
+            return Ok(());
+        }
+        // Progress tracks position in the id range, since a filtered scan
+        // skips an unknown number of games per batch.
+        progress(calculate_batch_progress(
+            cursor as usize,
+            max_game_id.max(1) as usize,
+        ));
+    }
+}
+
+/// Runs a position search to completion and caches its result.
+pub(super) fn run_search(
+    state: &AppState,
+    file: &Path,
+    query: &GameQueryJs,
+    position_query: &PositionQuery,
+    cancelled: &(impl Fn() -> bool + Sync),
+    progress: &dyn Fn(f64),
+) -> Result<SearchResult, Error> {
+    let start = Instant::now();
+    let generation = SEARCH_CACHE.generation(file);
+    let mut results = SearchResults::default();
+    scan_games(
+        state,
+        file,
+        query,
+        position_query,
+        cancelled,
+        progress,
+        |rows| {
+            let found = std::mem::take(&mut results);
+            results = found.merge(search_rows(rows, query, position_query, cancelled));
+            ControlFlow::Continue(())
+        },
+    )?;
+    if cancelled() {
         return Err(Error::SearchStopped);
     }
-
-    // Decide between cached data or batch processing
-    let (use_cached_data, total_games, cached_games) = {
-        let games_cache = state.db_cache.lock().unwrap();
-        let use_cached = !games_cache.is_empty();
-        if use_cached {
-            let cached_games = games_cache.clone();
-            let total = cached_games.len();
-            (true, total, Some(cached_games))
-        } else {
-            drop(games_cache);
-            let total = get_total_game_count(&state, &file)? as usize;
-            (false, total, None)
-        }
-    };
-
     info!(
-        "Starting optimized position analysis on {} games with parallel processing",
-        total_games
+        "Position search scanned {} games, {} passed basic filters, {} rejected by position pre-filter, {} matches, in {:?}",
+        results.processed,
+        results.passed_filters,
+        results.unreachable,
+        results.top_games.len(),
+        start.elapsed()
     );
-
-    // Both paths fold rows with `search_rows` and merge with `SearchResults::merge`;
-    // they differ only in where the rows come from.
-    let cancelled = || state.new_request.available_permits() == 0;
-    let results: SearchResults;
-
-    if use_cached_data {
-        let games = cached_games.unwrap();
-        results = search_rows(&games, &query, &position_query, &cancelled);
-
-        info!(
-            "Cached data processing complete: {} games processed, {} passed basic filters, {} rejected by position pre-filter, {} matches found",
-            results.processed,
-            results.passed_filters,
-            results.unreachable,
-            results.top_games.len()
-        );
-
-        // Emit progress update after batch completion (main thread, no mutex overhead)
-        let _ = app.emit(
-            "search_progress",
-            ProgressPayload {
-                progress: 100.0,
-                id: tab_id.clone(),
-                finished: false,
-            },
-        );
-    } else {
-        // Process large datasets in batches to manage memory
-        const BATCH_SIZE: i64 = 30000;
-        let mut offset = 0;
-
-        // Reject games that cannot hold the query before reading their moves.
-        let (index_filter, max_game_id) = {
-            let db = &mut get_db_or_create(
-                &state,
-                file.to_str().unwrap(),
-                ConnectionOptions::default(),
-            )?;
-            let up_to = crate::db::game_index::indexed_up_to(db);
-            let max_id: Option<i32> = games::table.select(diesel::dsl::max(games::id)).first(db)?;
-            (
-                position_query.index_filter(up_to).to_sql(),
-                max_id.unwrap_or(0),
-            )
-        };
-
-        if let Some(predicate) = &index_filter {
-            info!("Using position index pre-filter: {predicate}");
-        } else {
-            info!("No position index available, scanning every game");
-        }
-
-        // Collect results from all batches
-        let mut global = SearchResults::default();
-        let mut cursor = 0i32;
-
-        loop {
-            // Check for cancellation
-            if cancelled() {
-                drop(permit);
-                return Err(Error::SearchStopped);
-            }
-
-            // Load batch
-            let batch = load_filtered_games_batch(
-                &state,
-                &file,
-                cursor,
-                BATCH_SIZE,
-                index_filter.as_deref(),
-                &query,
-            )?;
-            if batch.is_empty() {
-                break;
-            }
-
-            cursor = batch.last().map(|(id, ..)| *id).unwrap_or(cursor);
-
-            info!(
-                "Processing batch: {} games (up to id {})",
-                batch.len(),
-                cursor
-            );
-
-            global = global.merge(search_rows(&batch, &query, &position_query, &cancelled));
-
-            offset += BATCH_SIZE;
-
-            // Progress tracks position in the id range, since a filtered scan
-            // skips an unknown number of games per batch.
-            let progress = calculate_batch_progress(cursor as usize, max_game_id.max(1) as usize);
-            let _ = app.emit(
-                "search_progress",
-                ProgressPayload {
-                    progress,
-                    id: tab_id.clone(),
-                    finished: false,
-                },
-            );
-
-            // For first batch, populate cache if it's reasonable size
-            if offset == BATCH_SIZE && total_games < 50000 {
-                info!(
-                    "Caching games for future searches (small dataset: {} games)",
-                    batch.len()
-                );
-                let mut cache = state.db_cache.lock().unwrap();
-                if cache.is_empty() {
-                    // Load all games into cache since dataset is manageable
-                    let all_games = load_games_batch(&state, &file, 0, i64::MAX)?;
-                    *cache = Arc::new(all_games);
-                }
-            }
-        }
-
-        info!("Batch processing complete: {} games processed, {} passed basic filters, {} rejected by position pre-filter, {} matches found",
-              global.processed, global.passed_filters, global.unreachable, global.top_games.len());
-        results = global;
-    }
 
     let position_stats = results.position_stats;
     let matched_game_ids = results.top_games.into_vec();
-
-    info!(
-        "Position search completed in {:?}. Found {} unique moves from {} games.",
-        start.elapsed(),
-        position_stats.len(),
-        matched_game_ids.len()
-    );
-
-    // Final cancellation check
-    if state.new_request.available_permits() == 0 {
-        drop(permit);
-        return Err(Error::SearchStopped);
-    }
 
     // Convert results
     let openings: Vec<PositionStats> = position_stats.into_values().collect();
@@ -1235,8 +1142,7 @@ pub async fn search_position(
     let matched_ids: Vec<i32> = matched_game_ids.iter().map(|matched| matched.id).collect();
 
     let mut normalized_games = if !matched_game_ids.is_empty() {
-        let db =
-            &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+        let db = &mut get_db_or_create(state, file.to_str().unwrap())?;
 
         let (white_players, black_players) = diesel::alias!(players as white, players as black);
         let mut query_builder = games::table
@@ -1339,172 +1245,115 @@ pub async fn search_position(
         });
     }
 
-    // Cache results (unless caching is disabled for debugging)
-    let result = (openings.clone(), normalized_games.clone());
-    if !DISABLE_CACHE {
-        let cache_key = (query.clone(), file.clone());
-        // LRU cache automatically evicts least recently used entry if at capacity
-        state
-            .line_cache
-            .lock()
-            .unwrap()
-            .push(cache_key.clone(), result.clone());
-        info!(
-            "Cached position search results for FEN '{}': {} position stats, {} games",
-            cache_key
-                .0
-                .position
-                .as_ref()
-                .map(|p| p.fen.as_str())
-                .unwrap_or("None"),
-            openings.len(),
-            normalized_games.len()
-        );
-    } else {
-        info!(
-            "CACHE DISABLED: Not caching results ({} position stats, {} games)",
-            openings.len(),
-            normalized_games.len()
-        );
-    }
-
-    // Emit completion
-    let _ = app.emit(
-        "search_progress",
-        ProgressPayload {
-            progress: 100.0,
-            id: tab_id,
-            finished: true,
-        },
-    );
-
-    drop(permit);
-
-    // Log total search time for performance monitoring
-    info!(
-        "Position search completed in total time: {:?} for FEN: '{}'",
-        start.elapsed(),
-        query
-            .position
-            .as_ref()
-            .map(|p| p.fen.as_str())
-            .unwrap_or("None")
-    );
-
+    let result = (openings, normalized_games);
+    SEARCH_CACHE.store_result(query, file, generation, result.clone());
     Ok(result)
 }
 
-/// Check if a position exists in the database (without full search)
-pub async fn is_position_in_db(
+/// Search for chess positions in the database
+/// Returns position statistics and matching games
+#[tauri::command]
+#[specta::specta]
+pub async fn search_position(
     file: PathBuf,
     query: GameQueryJs,
+    app: tauri::AppHandle,
+    tab_id: String,
     state: tauri::State<'_, AppState>,
-) -> Result<bool, Error> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+) -> Result<SearchResult, Error> {
+    info!("Starting position search for tab: {}", tab_id);
 
-    // Log the position query for debugging
-    if let Some(pos_query) = &query.position {
+    // Convert the position first: it validates the query.
+    let position_query = match &query.position {
+        Some(pos_query) => convert_position_query(pos_query.clone())?,
+        None => return Err(Error::NoMatchFound), // Position search requires a position
+    };
+
+    if let Some(cached) = SEARCH_CACHE.result(&query, &file) {
         info!(
-            "Checking if position exists in DB with FEN: {}",
-            pos_query.fen
+            "Using cached results: {} stats, {} games",
+            cached.0.len(),
+            cached.1.len()
         );
+        return Ok(cached);
     }
 
-    if let Some(pos) = state
-        .line_cache
-        .lock()
-        .unwrap()
-        .get(&(query.clone(), file.clone()))
-    {
-        info!(
-            "Using cached result for position existence check: {}",
-            !pos.0.is_empty()
-        );
-        return Ok(!pos.0.is_empty());
-    }
-
-    // start counting the time
-    let start = Instant::now();
-    info!("start loading games");
-
-    let permit = state.new_request.acquire().await.unwrap();
-    let mut games = state.db_cache.lock().unwrap();
-
-    if games.is_empty() {
-        let all_games: Vec<GameData> = games::table
-            .select((
-                games::id,
-                games::white_id,
-                games::black_id,
-                games::date,
-                games::result,
-                games::moves,
-                games::fen,
-                games::pawn_home,
-                games::white_material,
-                games::black_material,
-                games::white_elo,
-                games::black_elo,
-            ))
-            .load(db)?;
-        *games = Arc::new(all_games);
-
-        info!("got {} games: {:?}", games.len(), start.elapsed());
-    }
-
-    let exists = games.par_iter().any(
-        |(
-            _id,
-            _white_id,
-            _black_id,
-            _date,
-            _result,
-            game,
-            fen,
-            end_pawn_home,
-            white_material,
-            black_material,
-            _white_elo,
-            _black_elo,
-        )| {
-            if state.new_request.available_permits() == 0 {
-                return false;
-            }
-            let end_material: MaterialCount = ByColor {
-                white: *white_material as u8,
-                black: *black_material as u8,
-            };
-            if let Some(position_query) = &query.position {
-                let position_query =
-                    convert_position_query(position_query.clone()).expect("Invalid position query");
-                position_query.can_reach(&end_material, *end_pawn_home as u16)
-                    && get_move_after_match(game, fen, &position_query)
-                        .unwrap_or(None)
-                        .is_some()
-            } else {
-                false
-            }
-        },
-    );
-    info!("finished search in {:?}", start.elapsed());
+    // Handle request cancellation
+    let permit = state.new_request.clone().acquire_owned().await.unwrap();
     if state.new_request.available_permits() == 0 {
-        drop(permit);
         return Err(Error::SearchStopped);
     }
 
-    if !exists {
-        info!("Position not found in DB, caching empty result");
-        state
-            .line_cache
-            .lock()
-            .unwrap()
-            .push((query, file), (vec![], vec![]));
-    } else {
-        info!("Position found in DB");
-    }
-
+    let new_request = state.new_request.clone();
+    let emit_app = app.clone();
+    let emit_tab = tab_id.clone();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        let state = emit_app.state::<AppState>();
+        let emit = |progress: f64, finished: bool| {
+            let _ = emit_app.emit(
+                "search_progress",
+                ProgressPayload {
+                    progress,
+                    id: emit_tab.clone(),
+                    finished,
+                },
+            );
+        };
+        let cancelled = || new_request.available_permits() == 0;
+        let result = run_search(&state, &file, &query, &position_query, &cancelled, &|p| {
+            emit(p, false)
+        })?;
+        emit(100.0, true);
+        Ok::<_, Error>(result)
+    })
+    .await
+    .map_err(|e| Error::Io(std::io::Error::other(e)));
     drop(permit);
+    result?
+}
+
+/// Whether any game of `file` contains the position of `query`.
+///
+/// Scans the way a panel search does but stops at the first game that
+/// matches, and takes no search permit: a review's novelty check runs
+/// whatever panel searches are running.
+pub fn position_in_db(state: &AppState, file: &Path, query: &GameQueryJs) -> Result<bool, Error> {
+    let Some(pos_query) = &query.position else {
+        return Ok(false);
+    };
+    if let Some(cached) = SEARCH_CACHE.result(query, file) {
+        return Ok(!cached.0.is_empty());
+    }
+    let generation = SEARCH_CACHE.generation(file);
+    let position = convert_position_query(pos_query.clone())?;
+    let mut exists = false;
+    scan_games(state, file, query, &position, &|| false, &|_| {}, |rows| {
+        exists = rows
+            .par_iter()
+            .any(|row| matches!(check_game(row, query, &position), GameCheck::Hit(_)));
+        if exists {
+            ControlFlow::Break(())
+        } else {
+            ControlFlow::Continue(())
+        }
+    })?;
+    if !exists {
+        SEARCH_CACHE.store_result(query, file, generation, (vec![], vec![]));
+    }
     Ok(exists)
+}
+
+/// [`position_in_db`] off the async worker threads.
+pub async fn is_position_in_db(
+    app: tauri::AppHandle,
+    file: PathBuf,
+    query: GameQueryJs,
+) -> Result<bool, Error> {
+    tauri::async_runtime::spawn_blocking(move || {
+        position_in_db(&app.state::<AppState>(), &file, &query)
+    })
+    .await
+    .map_err(|e| Error::Io(std::io::Error::other(e)))?
 }
 
 #[cfg(test)]
@@ -2279,7 +2128,7 @@ mod search_rows_tests {
 
     fn hit(check: GameCheck) -> GameHit {
         match check {
-            GameCheck::Hit(hit) => hit,
+            GameCheck::Hit(hit) => *hit,
             _ => panic!("expected a hit"),
         }
     }

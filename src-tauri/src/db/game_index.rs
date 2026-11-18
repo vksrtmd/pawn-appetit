@@ -25,7 +25,6 @@ use super::{
     models::NewGameIndex,
     schema::{game_index, games, info},
     search::MoveStream,
-    ConnectionOptions,
 };
 use crate::{error::Result, AppState};
 
@@ -377,7 +376,7 @@ pub async fn build_position_index(
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<IndexBuildReport> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
 
     build_index(db, |processed, total| {
         let _ = app.emit(
@@ -481,7 +480,7 @@ pub fn build_index(
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_position_index(file: PathBuf, state: tauri::State<'_, AppState>) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
 
     ensure_table(db)?;
     diesel::delete(game_index::table).execute(db)?;
