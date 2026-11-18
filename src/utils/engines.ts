@@ -7,7 +7,7 @@ import { unwrap } from "./unwrap";
 
 export const requiredEngineSettings = ["MultiPV", "Threads", "Hash"];
 
-const ENGINES = [
+export const ENGINES = [
     {
         name: "Stockfish",
         version: "18",
@@ -320,7 +320,8 @@ const ENGINES = [
         bmi2: true,
         image: "https://lczero.org/images/logo.svg",
         installMethod: "package" as const,
-        packageCommand: "sudo apt-get install lc0",
+        packageManager: "apt",
+        packageName: "lc0",
         path: "/usr/bin/lc0",
         elo: 3440,
     },
@@ -331,7 +332,8 @@ const ENGINES = [
         bmi2: false,
         image: "https://lczero.org/images/logo.svg",
         installMethod: "package" as const,
-        packageCommand: "sudo apt-get install lc0",
+        packageManager: "apt",
+        packageName: "lc0",
         path: "/usr/bin/lc0",
         elo: 3440,
     },
@@ -375,7 +377,8 @@ const localEngineSchema = z.object({
     downloadSize: z.number().nullish(),
     downloadLink: z.string().nullish(),
     brewPackage: z.string().nullish(),
-    packageCommand: z.string().nullish(),
+    packageManager: z.string().nullish(),
+    packageName: z.string().nullish(),
     loaded: z.boolean().nullish(),
     go: goModeSchema.nullish(),
     enabled: z.boolean().nullish(),
@@ -399,6 +402,16 @@ export type RemoteEngine = z.infer<typeof remoteEngineSchema>;
 
 export const engineSchema = z.union([localEngineSchema, remoteEngineSchema]);
 export type Engine = z.infer<typeof engineSchema>;
+
+export function packageInstallArgs(engine: {
+    packageManager?: string | null;
+    packageName?: string | null;
+}): [string, string] {
+    if (!engine.packageManager || !engine.packageName) {
+        throw new Error("Package manager or package name not found");
+    }
+    return [engine.packageManager, engine.packageName];
+}
 
 export function stopEngine(engine: LocalEngine, tab: string): Promise<void> {
     return commands.stopEngine(engine.path, tab).then((r) => {

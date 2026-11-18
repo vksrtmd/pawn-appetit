@@ -2,6 +2,7 @@ use std::{
     fs::create_dir_all,
     io::{Cursor, Read, Write},
     path::{Component, Path, PathBuf},
+    time::Duration,
 };
 
 use flate2::read::GzDecoder;
@@ -14,7 +15,8 @@ use tauri_specta::Event;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-use futures_util::StreamExt;
+use futures_util::{Stream, StreamExt};
+use tauri::Manager;
 
 use crate::error::Error;
 
@@ -59,21 +61,14 @@ pub async fn download_file(
         )));
     }
 
-    if let Some(host) = parsed_url.host_str() {
-        if is_private_or_localhost(host) {
-            return Err(Error::PackageManager(format!(
-                "Cannot access private/local addresses: {}",
-                host
-            )));
-        }
-    }
+    let path = ensure_inside(&app.path().app_data_dir()?, &path)?;
 
     info!("Downloading file from {} to {}", url, path.display());
 
-    validate_destination_path(&path)?;
-
+    // No whole-request timeout: large engine downloads legitimately take longer than any fixed cap.
     let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(300))
+        .connect_timeout(Duration::from_secs(30))
+        .read_timeout(Duration::from_secs(60))
         .build()?;
 
     let mut req = client.get(&url);
@@ -102,206 +97,253 @@ pub async fn download_file(
         }
     }
 
-    let is_archive = url.ends_with(".zip") || url.ends_with(".tar") || url.ends_with(".tar.gz");
+    let emit = |progress: f32, finished: bool| {
+        DownloadProgress {
+            progress,
+            id: id.clone(),
+            finished,
+        }
+        .emit(&app)
+        .map_err(Error::from)
+    };
 
-    if is_archive {
-        download_and_extract(res, content_length, &path, &url, &id, &app, finalize).await?;
+    if let Some(kind) = ArchiveKind::from_url(&url) {
+        // The download is the first half of the progress bar, extraction the second.
+        let data = collect_stream(res.bytes_stream(), content_length, |p| {
+            emit(if p < 0.0 { p } else { p / 2.0 }, false)
+        })
+        .await?;
+        emit(50.0, false)?;
+        extract_atomic(&path, kind, data)?;
+        info!("Extraction complete");
     } else {
-        download_to_file(res, content_length, &path, &id, &app, finalize).await?;
+        download_atomic(res.bytes_stream(), &path, content_length, |p| {
+            emit(p, false)
+        })
+        .await?;
+        info!("Downloaded file to {}", path.display());
+    }
+
+    if finalize {
+        emit(100.0, true)?;
     }
 
     Ok(())
 }
 
-async fn download_to_file(
-    res: reqwest::Response,
-    content_length: Option<u64>,
+/// Returns `target` with symlinks in its existing part resolved, if it lies inside `base`.
+pub fn ensure_inside(base: &Path, target: &Path) -> Result<PathBuf, Error> {
+    let outside = || {
+        Error::PackageManager(format!(
+            "Path is outside the app data folder: {}",
+            target.display()
+        ))
+    };
+
+    if !target.is_absolute() || target.components().any(|c| c == Component::ParentDir) {
+        return Err(outside());
+    }
+
+    let base = base.canonicalize()?;
+
+    // Walk up to the nearest ancestor that exists, so a target that is not created yet can be checked.
+    let mut existing = target;
+    let mut missing = Vec::new();
+    let mut resolved = loop {
+        // A dangling symlink fails canonicalize but would still be followed on write.
+        if existing.symlink_metadata().is_ok() {
+            break existing.canonicalize()?;
+        }
+        match (existing.file_name(), existing.parent()) {
+            (Some(name), Some(parent)) => {
+                missing.push(name);
+                existing = parent;
+            }
+            _ => return Err(outside()),
+        }
+    };
+    resolved.extend(missing.iter().rev());
+
+    if resolved.starts_with(&base) {
+        Ok(resolved)
+    } else {
+        Err(outside())
+    }
+}
+
+/// Feeds every chunk to `sink`, reporting percent complete (-1 when the total is unknown).
+async fn drain_stream<S, C, E>(
+    stream: S,
+    total: Option<u64>,
+    mut sink: impl FnMut(&[u8]) -> Result<(), Error>,
+    mut on_progress: impl FnMut(f32) -> Result<(), Error>,
+) -> Result<(), Error>
+where
+    S: Stream<Item = Result<C, E>>,
+    C: AsRef<[u8]>,
+    E: Into<Error>,
+{
+    futures_util::pin_mut!(stream);
+    let mut downloaded: u64 = 0;
+
+    while let Some(item) = stream.next().await {
+        let chunk = item.map_err(Into::into)?;
+        let chunk = chunk.as_ref();
+
+        downloaded = downloaded.saturating_add(chunk.len() as u64);
+        if downloaded > MAX_DOWNLOAD_SIZE {
+            return Err(Error::PackageManager(
+                "Download size limit exceeded".to_string(),
+            ));
+        }
+
+        sink(chunk)?;
+
+        on_progress(
+            total
+                .map(|total| ((downloaded as f64 / total as f64) * 100.0).min(100.0) as f32)
+                .unwrap_or(-1.0),
+        )?;
+    }
+
+    Ok(())
+}
+
+async fn collect_stream<S, C, E>(
+    stream: S,
+    total: Option<u64>,
+    on_progress: impl FnMut(f32) -> Result<(), Error>,
+) -> Result<Vec<u8>, Error>
+where
+    S: Stream<Item = Result<C, E>>,
+    C: AsRef<[u8]>,
+    E: Into<Error>,
+{
+    let mut data = Vec::with_capacity(total.unwrap_or(0).min(MAX_DOWNLOAD_SIZE) as usize);
+    drain_stream(
+        stream,
+        total,
+        |chunk| {
+            data.extend_from_slice(chunk);
+            Ok(())
+        },
+        on_progress,
+    )
+    .await?;
+    Ok(data)
+}
+
+/// Streams into `<path>.part` and renames over `path` on success; on error `path` is untouched.
+async fn download_atomic<S, C, E>(
+    stream: S,
     path: &Path,
-    id: &str,
-    app: &tauri::AppHandle,
-    finalize: bool,
-) -> Result<(), Error> {
+    total: Option<u64>,
+    on_progress: impl FnMut(f32) -> Result<(), Error>,
+) -> Result<(), Error>
+where
+    S: Stream<Item = Result<C, E>>,
+    C: AsRef<[u8]>,
+    E: Into<Error>,
+{
     if let Some(parent) = path.parent() {
         create_dir_all(parent)?;
     }
 
-    let mut file = std::fs::File::create(path)?;
-    let mut downloaded: u64 = 0;
-    let mut stream = res.bytes_stream();
+    let mut part = path.as_os_str().to_owned();
+    part.push(".part");
+    let part = PathBuf::from(part);
 
-    while let Some(item) = stream.next().await {
-        let chunk = item?;
-
-        downloaded = downloaded.saturating_add(chunk.len() as u64);
-        if downloaded > MAX_DOWNLOAD_SIZE {
-            return Err(Error::PackageManager(
-                "Download size limit exceeded".to_string(),
-            ));
-        }
-
-        file.write_all(&chunk)?;
-
-        let progress = content_length
-            .map(|total| ((downloaded as f64 / total as f64) * 100.0).min(100.0) as f32)
-            .unwrap_or(-1.0);
-
-        DownloadProgress {
-            progress,
-            id: id.to_string(),
-            finished: false,
-        }
-        .emit(app)?;
+    let result = async {
+        let mut file = std::fs::File::create(&part)?;
+        drain_stream(
+            stream,
+            total,
+            |chunk| Ok(file.write_all(chunk)?),
+            on_progress,
+        )
+        .await?;
+        file.sync_all()?;
+        std::fs::rename(&part, path)?;
+        Ok(())
     }
+    .await;
 
-    file.sync_all()?;
-
-    info!("Downloaded file to {}", path.display());
-
-    if finalize {
-        DownloadProgress {
-            progress: 100.0,
-            id: id.to_string(),
-            finished: true,
-        }
-        .emit(app)?;
+    if result.is_err() {
+        let _ = std::fs::remove_file(&part);
     }
-
-    Ok(())
+    result
 }
 
-async fn download_and_extract(
-    res: reqwest::Response,
-    content_length: Option<u64>,
-    path: &Path,
-    url: &str,
-    id: &str,
-    app: &tauri::AppHandle,
-    finalize: bool,
-) -> Result<(), Error> {
-    let mut file_data: Vec<u8> = if let Some(size) = content_length {
-        Vec::with_capacity(size.min(MAX_DOWNLOAD_SIZE) as usize)
-    } else {
-        Vec::new()
-    };
-
-    let mut downloaded: u64 = 0;
-    let mut stream = res.bytes_stream();
-
-    while let Some(item) = stream.next().await {
-        let chunk = item?;
-
-        downloaded = downloaded.saturating_add(chunk.len() as u64);
-        if downloaded > MAX_DOWNLOAD_SIZE {
-            return Err(Error::PackageManager(
-                "Download size limit exceeded".to_string(),
-            ));
-        }
-
-        file_data.extend_from_slice(&chunk);
-
-        // Progress for download phase (0-50%)
-        let progress = content_length
-            .map(|total| ((downloaded as f64 / total as f64) * 50.0).min(50.0) as f32)
-            .unwrap_or(-1.0);
-
-        DownloadProgress {
-            progress,
-            id: id.to_string(),
-            finished: false,
-        }
-        .emit(app)?;
-    }
-
-    info!(
-        "Downloaded {} bytes, starting extraction to {}",
-        downloaded,
-        path.display()
-    );
-
-    DownloadProgress {
-        progress: 50.0,
-        id: id.to_string(),
-        finished: false,
-    }
-    .emit(app)?;
-
-    if url.ends_with(".zip") {
-        unzip_file(path, file_data)?;
-    } else if url.ends_with(".tar") {
-        extract_tar_file(path, file_data, false)?;
-    } else if url.ends_with(".tar.gz") {
-        extract_tar_file(path, file_data, true)?;
-    } else {
-        std::fs::write(path, file_data)?;
-    }
-
-    info!("Extraction complete");
-
-    if finalize {
-        DownloadProgress {
-            progress: 100.0,
-            id: id.to_string(),
-            finished: true,
-        }
-        .emit(app)?;
-    }
-
-    Ok(())
+#[derive(Clone, Copy)]
+pub enum ArchiveKind {
+    Zip,
+    Tar,
+    TarGz,
 }
 
-fn validate_destination_path(path: &Path) -> Result<(), Error> {
-    let canonical = path.canonicalize().or_else(|_| {
-        if let Some(parent) = path.parent() {
-            if parent.exists() {
-                parent
-                    .canonicalize()
-                    .map(|p| p.join(path.file_name().unwrap()))
-            } else {
-                Err(std::io::Error::new(
-                    std::io::ErrorKind::NotFound,
-                    "Parent directory does not exist",
-                ))
-            }
+impl ArchiveKind {
+    fn from_url(url: &str) -> Option<Self> {
+        if url.ends_with(".zip") {
+            Some(Self::Zip)
+        } else if url.ends_with(".tar") {
+            Some(Self::Tar)
+        } else if url.ends_with(".tar.gz") {
+            Some(Self::TarGz)
         } else {
-            Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Invalid path",
-            ))
+            None
         }
-    })?;
-
-    let path_str = canonical.to_string_lossy();
-    if path_str.contains("..") {
-        return Err(Error::PackageManager("Path contains '..'".to_string()));
     }
-
-    Ok(())
 }
 
-fn is_private_or_localhost(host: &str) -> bool {
-    use std::net::IpAddr;
+/// Extracts into a scratch dir inside `target` (same filesystem, so the moves are renames), then
+/// merges the tree into `target` file by file: only paths the archive contains are replaced, so
+/// archives that share a top-level folder (or a folder the user already uses) keep each other's
+/// files. A file where the archive has a directory, or the reverse, is an error, never deleted.
+/// On an extraction error `target` is untouched.
+pub fn extract_atomic(target: &Path, kind: ArchiveKind, data: Vec<u8>) -> Result<(), Error> {
+    create_dir_all(target)?;
+    let stage = tempfile::Builder::new()
+        .prefix(".extract-")
+        .tempdir_in(target)?;
 
-    if host == "localhost" || host == "::1" {
-        return true;
+    match kind {
+        ArchiveKind::Zip => unzip_file(stage.path(), data)?,
+        ArchiveKind::Tar => extract_tar_file(stage.path(), data, false)?,
+        ArchiveKind::TarGz => extract_tar_file(stage.path(), data, true)?,
     }
 
-    // Try parsing as IP address
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        match ip {
-            IpAddr::V4(ipv4) => {
-                let octets = ipv4.octets();
-                // 127.0.0.0/8, 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 0.0.0.0/8
-                octets[0] == 127
-                    || octets[0] == 10
-                    || octets[0] == 0
-                    || (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31)
-                    || (octets[0] == 192 && octets[1] == 168)
+    merge_tree(stage.path(), target)
+}
+
+fn merge_tree(from: &Path, to: &Path) -> Result<(), Error> {
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let src = entry.path();
+        let dest = to.join(entry.file_name());
+        let existing = dest.symlink_metadata().ok();
+        if entry.file_type()?.is_dir() {
+            match existing {
+                None => std::fs::create_dir(&dest)?,
+                Some(meta) if meta.is_dir() => {}
+                Some(_) => {
+                    return Err(Error::PackageManager(format!(
+                        "Cannot extract directory over existing file: {}",
+                        dest.display()
+                    )))
+                }
             }
-            IpAddr::V6(ipv6) => ipv6.is_loopback() || ipv6.is_unspecified(),
+            merge_tree(&src, &dest)?;
+        } else {
+            if existing.is_some_and(|meta| meta.is_dir()) {
+                return Err(Error::PackageManager(format!(
+                    "Cannot extract file over existing directory: {}",
+                    dest.display()
+                )));
+            }
+            std::fs::rename(&src, &dest)?;
         }
-    } else {
-        false
     }
+    Ok(())
 }
 
 fn unsafe_archive_error(message: impl Into<String>) -> Error {
@@ -560,8 +602,9 @@ fn extract_tar_reader<R: Read>(path: &Path, reader: R) -> Result<(), Error> {
 
 #[tauri::command]
 #[specta::specta]
-pub async fn set_file_as_executable(path: String) -> Result<(), Error> {
-    let path = Path::new(&path);
+pub async fn set_file_as_executable(path: String, app: tauri::AppHandle) -> Result<(), Error> {
+    let path = ensure_inside(&app.path().app_data_dir()?, Path::new(&path))?;
+    let path = path.as_path();
 
     if !path.exists() {
         return Err(Error::PackageManager(format!(
@@ -638,8 +681,12 @@ pub async fn get_file_metadata(path: String) -> Result<FileMetadata, Error> {
 
 #[cfg(test)]
 mod fs_tests {
-    use super::{extract_tar_file, unzip_file};
+    use super::{
+        download_atomic, ensure_inside, extract_atomic, extract_tar_file, unzip_file, ArchiveKind,
+    };
+    use crate::error::Error;
     use flate2::{write::GzEncoder, Compression};
+    use futures_util::stream;
     use std::{
         io::{Cursor, Write},
         path::Path,
@@ -785,5 +832,175 @@ mod fs_tests {
 
         assert!(extract_tar_file(dir.path(), archive, false).is_err());
         assert!(!dir.path().join("engine-hardlink").exists());
+    }
+
+    #[test]
+    fn ensure_inside_accepts_existing_and_new_nested_paths() {
+        let base = tempdir().unwrap();
+        let existing = base.path().join("engines");
+        std::fs::create_dir(&existing).unwrap();
+
+        assert!(ensure_inside(base.path(), &existing).is_ok());
+        assert!(ensure_inside(base.path(), &base.path().join("a/b/c.bin")).is_ok());
+    }
+
+    #[test]
+    fn ensure_inside_rejects_outside_and_parent_escape() {
+        let base = tempdir().unwrap();
+        let other = tempdir().unwrap();
+
+        assert!(ensure_inside(base.path(), &other.path().join("x")).is_err());
+        assert!(ensure_inside(base.path(), &base.path().join("a/../../x")).is_err());
+        assert!(ensure_inside(base.path(), Path::new("relative/x")).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn ensure_inside_rejects_symlink_pointing_out() {
+        let base = tempdir().unwrap();
+        let other = tempdir().unwrap();
+        std::os::unix::fs::symlink(other.path(), base.path().join("link")).unwrap();
+        std::os::unix::fs::symlink(other.path().join("gone"), base.path().join("dangling"))
+            .unwrap();
+
+        assert!(ensure_inside(base.path(), &base.path().join("link/x")).is_err());
+        assert!(ensure_inside(base.path(), &base.path().join("dangling")).is_err());
+    }
+
+    #[tokio::test]
+    async fn download_replaces_file_when_stream_completes() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("engine.bin");
+        std::fs::write(&path, b"old").unwrap();
+        let chunks: Vec<Result<Vec<u8>, Error>> = vec![Ok(b"ne".to_vec()), Ok(b"w".to_vec())];
+
+        download_atomic(stream::iter(chunks), &path, Some(3), |_| Ok(()))
+            .await
+            .unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), b"new");
+        assert!(!dir.path().join("engine.bin.part").exists());
+    }
+
+    #[tokio::test]
+    async fn failed_download_keeps_old_file_and_leaves_no_part() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("engine.bin");
+        std::fs::write(&path, b"old").unwrap();
+        let chunks: Vec<Result<Vec<u8>, Error>> = vec![
+            Ok(b"partial".to_vec()),
+            Err(Error::PackageManager("connection reset".into())),
+        ];
+
+        let result = download_atomic(stream::iter(chunks), &path, None, |_| Ok(())).await;
+
+        assert!(result.is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"old");
+        assert!(!dir.path().join("engine.bin.part").exists());
+    }
+
+    #[test]
+    fn extract_atomic_replaces_same_path_files_and_keeps_siblings() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("engine")).unwrap();
+        std::fs::write(dir.path().join("engine/same.txt"), b"old").unwrap();
+        std::fs::write(dir.path().join("engine/sibling.txt"), b"sibling").unwrap();
+        std::fs::write(dir.path().join("keep.txt"), b"keep").unwrap();
+        let archive = make_zip(&[
+            ("engine/same.txt", b"new", Some(0o100644)),
+            ("engine/new.txt", b"new", Some(0o100644)),
+        ]);
+
+        extract_atomic(dir.path(), ArchiveKind::Zip, archive).unwrap();
+
+        let read = |p: &str| std::fs::read(dir.path().join(p)).unwrap();
+        assert_eq!(read("engine/same.txt"), b"new");
+        assert_eq!(read("engine/new.txt"), b"new");
+        assert_eq!(read("engine/sibling.txt"), b"sibling");
+        assert_eq!(read("keep.txt"), b"keep");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    }
+
+    #[test]
+    fn extract_atomic_keeps_earlier_archive_sharing_a_top_level_folder() {
+        let dir = tempdir().unwrap();
+        let first = gzip(make_tar_entry("stockfish/a", EntryType::Regular, b"a"));
+        let second = gzip(make_tar_entry("stockfish/b", EntryType::Regular, b"b"));
+
+        extract_atomic(dir.path(), ArchiveKind::TarGz, first).unwrap();
+        extract_atomic(dir.path(), ArchiveKind::TarGz, second).unwrap();
+
+        assert_eq!(std::fs::read(dir.path().join("stockfish/a")).unwrap(), b"a");
+        assert_eq!(std::fs::read(dir.path().join("stockfish/b")).unwrap(), b"b");
+    }
+
+    #[test]
+    fn extract_atomic_keeps_existing_files_in_a_shared_top_level_folder() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("db")).unwrap();
+        std::fs::write(dir.path().join("db/x.db3"), b"user").unwrap();
+        let archive = make_zip(&[("db/other", b"o", Some(0o100644))]);
+
+        extract_atomic(dir.path(), ArchiveKind::Zip, archive).unwrap();
+
+        assert_eq!(std::fs::read(dir.path().join("db/x.db3")).unwrap(), b"user");
+        assert_eq!(std::fs::read(dir.path().join("db/other")).unwrap(), b"o");
+    }
+
+    #[test]
+    fn extract_atomic_refuses_to_replace_a_directory_with_a_file() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("engine/data")).unwrap();
+        std::fs::write(dir.path().join("engine/data/user.txt"), b"user").unwrap();
+        let archive = make_zip(&[("engine/data", b"file", Some(0o100644))]);
+
+        assert!(extract_atomic(dir.path(), ArchiveKind::Zip, archive).is_err());
+
+        assert_eq!(
+            std::fs::read(dir.path().join("engine/data/user.txt")).unwrap(),
+            b"user"
+        );
+    }
+
+    #[test]
+    fn extract_atomic_refuses_to_replace_a_file_with_a_directory() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("engine"), b"user").unwrap();
+        let archive = make_zip(&[("engine/new.txt", b"new", Some(0o100644))]);
+
+        assert!(extract_atomic(dir.path(), ArchiveKind::Zip, archive).is_err());
+
+        assert_eq!(std::fs::read(dir.path().join("engine")).unwrap(), b"user");
+    }
+
+    #[test]
+    fn malicious_archive_leaves_target_unchanged() {
+        let dir = tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("engine")).unwrap();
+        std::fs::write(dir.path().join("engine/old.txt"), b"old").unwrap();
+        let archive = make_zip(&[
+            ("engine/new.txt", b"new", Some(0o100644)),
+            ("../outside.txt", b"bad", Some(0o100644)),
+        ]);
+
+        assert!(extract_atomic(dir.path(), ArchiveKind::Zip, archive).is_err());
+
+        assert_eq!(
+            std::fs::read(dir.path().join("engine/old.txt")).unwrap(),
+            b"old"
+        );
+        assert!(!dir.path().join("engine/new.txt").exists());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn corrupt_archive_leaves_target_unchanged() {
+        let dir = tempdir().unwrap();
+        std::fs::write(dir.path().join("old.txt"), b"old").unwrap();
+
+        assert!(extract_atomic(dir.path(), ArchiveKind::Zip, b"not a zip".to_vec()).is_err());
+
+        assert_eq!(std::fs::read(dir.path().join("old.txt")).unwrap(), b"old");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }
