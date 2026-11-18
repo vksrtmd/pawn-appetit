@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { fireEvent, renderHook, waitFor } from "@testing-library/react";
+import { renderHook } from "@testing-library/react";
 import { getDefaultStore } from "jotai";
 import { beforeEach, expect, test, vi } from "vitest";
 
@@ -100,14 +100,4 @@ test("closing a tab with the close button disposes it", async () => {
 
   expect(Object.keys(sessionStorage).filter((k) => k === "c" || k.startsWith("c_"))).toEqual([]);
   expect(killEngines).toHaveBeenCalledWith("c");
-});
-
-test("Ctrl/Cmd+W on a dirty tab shows the unsaved-changes dialog and keeps the tab", async () => {
-  getDefaultStore().set(activeTabAtom, "b");
-  renderHook(() => useTabManagement());
-
-  fireEvent.keyDown(document.body, { key: "w", code: "KeyW", ctrlKey: true, metaKey: true });
-
-  await waitFor(() => expect(openConfirmModal).toHaveBeenCalledTimes(1));
-  expect(getDefaultStore().get(tabsAtom)).toHaveLength(2);
 });

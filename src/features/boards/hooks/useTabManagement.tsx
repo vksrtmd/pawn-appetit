@@ -1,6 +1,4 @@
-import { Text } from "@mantine/core";
 import { useHotkeys } from "@mantine/hooks";
-import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { useLoaderData } from "@tanstack/react-router";
 import { useAtom, useAtomValue } from "jotai";
@@ -9,7 +7,8 @@ import { useTranslation } from "react-i18next";
 import { MAX_TABS } from "@/features/boards/constants";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
-import { dispose, duplicate, readTree, save } from "@/state/tabSession";
+import { requestCloseTab } from "@/state/tabClose";
+import { dispose, duplicate } from "@/state/tabSession";
 import { createTab } from "@/utils/tabs";
 
 export function useTabManagement() {
@@ -29,67 +28,42 @@ export function useTabManagement() {
     }
   }, [tabs, setActiveTab, setTabs, t]);
 
+  const removeTab = useCallback(
+    async (value: string) => {
+      setTabs((prevTabs) => {
+        const index = prevTabs.findIndex((tab) => tab.value === value);
+        if (index === -1) return prevTabs;
+
+        const newTabs = prevTabs.filter((tab) => tab.value !== value);
+
+        setActiveTab((currentActiveTab) => {
+          if (value === currentActiveTab) {
+            if (newTabs.length === 0) {
+              return null;
+            }
+            if (index === prevTabs.length - 1) {
+              return newTabs[index - 1].value;
+            }
+            return newTabs[index].value;
+          }
+          return currentActiveTab;
+        });
+
+        return newTabs;
+      });
+
+      await dispose(value);
+    },
+    [setTabs, setActiveTab],
+  );
+
   const closeTab = useCallback(
     async (value: string | null, forced?: boolean) => {
-      if (value !== null) {
-        let hasSource = false;
-        setTabs((prevTabs) => {
-          const closedTab = prevTabs.find((tab) => tab.value === value);
-          hasSource = !!closedTab?.source;
-          return prevTabs;
-        });
-
-        if (readTree(value)?.dirty && hasSource && !forced) {
-          modals.openConfirmModal({
-            title: t("common.unsavedChanges.title"),
-            withCloseButton: false,
-            children: <Text>{t("common.unsavedChanges.desc")}</Text>,
-            labels: {
-              confirm: t("common.unsavedChanges.saveAndClose"),
-              cancel: t("common.unsavedChanges.closeWithoutSaving"),
-            },
-            onConfirm: async () => {
-              try {
-                if ((await save(value, { dir: documentDir })) === "cancelled") return;
-              } catch {
-                // The failed write was already reported; keep the tab open so the edits survive.
-                return;
-              }
-              closeTab(value, true);
-            },
-            onCancel: () => {
-              closeTab(value, true);
-            },
-          });
-          return;
-        }
-
-        setTabs((prevTabs) => {
-          const index = prevTabs.findIndex((tab) => tab.value === value);
-          if (index === -1) return prevTabs;
-
-          const newTabs = prevTabs.filter((tab) => tab.value !== value);
-
-          setActiveTab((currentActiveTab) => {
-            if (value === currentActiveTab) {
-              if (newTabs.length === 0) {
-                return null;
-              }
-              if (index === prevTabs.length - 1) {
-                return newTabs[index - 1].value;
-              }
-              return newTabs[index].value;
-            }
-            return currentActiveTab;
-          });
-
-          return newTabs;
-        });
-
-        await dispose(value);
-      }
+      if (value === null) return;
+      if (forced) return removeTab(value);
+      return requestCloseTab(value, { dir: documentDir, t, close: () => removeTab(value) });
     },
-    [setTabs, setActiveTab, documentDir, t],
+    [removeTab, documentDir, t],
   );
 
   const selectTab = useCallback(
@@ -147,7 +121,6 @@ export function useTabManagement() {
 
   const keyMap = useAtomValue(keyMapAtom);
   useHotkeys([
-    [keyMap.CLOSE_BOARD_TAB.keys, () => closeTab(activeTab)],
     [keyMap.CYCLE_BOARD_TABS.keys, () => cycleTabs()],
     [keyMap.REVERSE_CYCLE_BOARD_TABS.keys, () => cycleTabs(true)],
     [keyMap.BOARD_TAB_ONE.keys, () => selectTab(0)],

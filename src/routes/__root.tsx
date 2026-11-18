@@ -40,7 +40,8 @@ import { CUSTOM_EVENTS } from "@/features/boards/constants";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { checkForUpdates as checkLatestRelease } from "@/services/version-checker";
 import { activeTabAtom, densityAtom, tabsAtom } from "@/state/atoms";
-import { closeActiveTab, closeAllTabs, closeOtherTabs } from "@/state/tabSession";
+import { useCloseActiveTab } from "@/state/tabClose";
+import { closeAllTabs, closeOtherTabs } from "@/state/tabSession";
 import { keyMapAtom } from "@/state/keybindings";
 import { openFileAndRemember } from "@/utils/files";
 import { formatHotkeyDisplay } from "@/utils/formatHotkey";
@@ -482,7 +483,7 @@ function RootLayout() {
     }
   }, []);
 
-  const handleCloseTab = closeActiveTab;
+  const handleCloseTab = useCloseActiveTab();
 
   const handleCloseOtherTabs = useCallback(() => {
     if (activeTab) closeOtherTabs(activeTab);
