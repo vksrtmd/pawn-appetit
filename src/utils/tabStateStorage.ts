@@ -1,3 +1,5 @@
+import { notifications } from "@mantine/notifications";
+import i18n from "i18next";
 import { compressToUTF16, decompressFromUTF16 } from "lz-string";
 import type { StateStorage } from "zustand/middleware";
 
@@ -26,6 +28,8 @@ export function deserializeStorageValue<T>(raw: string): T | null {
     }
 }
 
+let storageFullShown = false;
+
 // Drop-in StateStorage for zustand `persist`: compresses the JSON string into sessionStorage and
 // decompresses on the way out, tolerating any legacy uncompressed value already stored.
 export const compressedSessionStorage: StateStorage = {
@@ -45,7 +49,20 @@ export const compressedSessionStorage: StateStorage = {
         return raw;
     },
     setItem: (name, value) => {
-        sessionStorage.setItem(name, compressToUTF16(value));
+        try {
+            sessionStorage.setItem(name, compressToUTF16(value));
+            storageFullShown = false;
+        } catch {
+            // The quota is full: the tab stays usable but this write is lost. Say so once.
+            if (!storageFullShown) {
+                storageFullShown = true;
+                notifications.show({
+                    color: "red",
+                    title: i18n.t("storageFull.title"),
+                    message: i18n.t("storageFull.message"),
+                });
+            }
+        }
     },
     removeItem: (name) => {
         sessionStorage.removeItem(name);

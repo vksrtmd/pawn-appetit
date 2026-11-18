@@ -147,7 +147,7 @@ export function useTabManagement() {
 
   const keyMap = useAtomValue(keyMapAtom);
   useHotkeys([
-    [keyMap.CLOSE_BOARD_TAB.keys, () => closeTab(activeTab, true)],
+    [keyMap.CLOSE_BOARD_TAB.keys, () => closeTab(activeTab)],
     [keyMap.CYCLE_BOARD_TABS.keys, () => cycleTabs()],
     [keyMap.REVERSE_CYCLE_BOARD_TABS.keys, () => cycleTabs(true)],
     [keyMap.BOARD_TAB_ONE.keys, () => selectTab(0)],
