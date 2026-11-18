@@ -102,6 +102,9 @@ pub enum Error {
     #[error("Malformed move blob: {0}")]
     MalformedMoveBlob(String),
 
+    #[error("Failed to read the import file: {0}")]
+    ImportRead(String),
+
     #[error("Failed to acquire mutex lock: {0}")]
     MutexLockFailed(String),
 

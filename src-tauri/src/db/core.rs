@@ -111,7 +111,8 @@ pub fn normalize_game(
 ) -> Result<NormalizedGame> {
     let fen: Fen = game
         .fen
-        .map(|f| Fen::from_ascii(f.as_bytes()).unwrap())
+        .map(|f| Fen::from_ascii(f.as_bytes()))
+        .transpose()?
         .unwrap_or_default();
 
     Ok(NormalizedGame {
@@ -303,6 +304,18 @@ pub(crate) mod tests {
                     .unwrap(),
             ),
         )
+    }
+
+    #[test]
+    fn a_game_with_a_bad_stored_fen_is_an_error_not_a_panic() {
+        let mut conn = test_db();
+        seed_game(&mut conn, "Alice", "Bob", "Open");
+        diesel::update(games::table)
+            .set(games::fen.eq("not a fen"))
+            .execute(&mut conn)
+            .unwrap();
+        let id: i32 = games::table.select(games::id).first(&mut conn).unwrap();
+        assert!(get_game(&mut conn, id).is_err());
     }
 
     #[test]
