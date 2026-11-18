@@ -9,10 +9,9 @@ import { Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/men
 import { appLogDir, resolve } from "@tauri-apps/api/path";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-import { ask, message, open } from "@tauri-apps/plugin-dialog";
+import { ask, open } from "@tauri-apps/plugin-dialog";
 import { openPath } from "@tauri-apps/plugin-opener";
-import { exit, relaunch } from "@tauri-apps/plugin-process";
-import { check } from "@tauri-apps/plugin-updater";
+import { exit } from "@tauri-apps/plugin-process";
 import { useAtom } from "jotai";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -29,7 +28,6 @@ import AboutModal from "@/components/About";
 import { SideBar } from "@/components/Sidebar";
 import StatusBar from "@/components/StatusBar";
 import TopBar from "@/components/TopBar";
-import { getVersionCheckConfig } from "@/config";
 import {
   type BoardCommandId,
   getRunnableBoardCommand,
@@ -38,7 +36,6 @@ import {
 import ImportModal from "@/features/boards/components/ImportModal";
 import { CUSTOM_EVENTS } from "@/features/boards/constants";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
-import { checkForUpdates as checkLatestRelease } from "@/services/version-checker";
 import { activeTabAtom, densityAtom, tabsAtom } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
 import { openFileAndRemember } from "@/utils/files";
@@ -275,116 +272,6 @@ function RootLayout() {
       setActiveTab,
     });
   }, [navigate, setActiveTab, setTabs, t]);
-
-  const checkForUpdates = useCallback(async () => {
-    const showNoUpdatesMessage = async (latestVersion?: string) => {
-      const version = latestVersion ?? getVersionCheckConfig().currentVersion;
-
-      await message(
-        t("features.updater.noUpdatesMessage", {
-          defaultValue: `Pawn Appetit is up to date. Latest version: ${version}.`,
-          version,
-        }),
-        {
-          title: t("features.updater.noUpdatesAvailable", "No Updates Available"),
-          kind: "info",
-        },
-      );
-    };
-
-    const reportReleaseStatus = async (updaterError: unknown): Promise<boolean> => {
-      console.error("Tauri updater check failed:", updaterError);
-
-      const result = await checkLatestRelease({
-        ...getVersionCheckConfig(),
-        skipInDev: false,
-      });
-
-      if (result.error) {
-        console.error("GitHub release fallback check failed:", result.error);
-        return false;
-      }
-
-      if (result.hasUpdate && result.versionInfo) {
-        const downloadUrl = result.versionInfo.downloadUrl;
-        const downloadSuffix = downloadUrl ? `\n\nDownload it from: ${downloadUrl}` : "";
-
-        await message(
-          t("features.updater.manualUpdateAvailableMessage", {
-            defaultValue: `Version ${result.versionInfo.version} is available, but automatic update installation could not be started.${downloadSuffix}`,
-            version: result.versionInfo.version,
-            downloadUrl,
-          }),
-          {
-            title: t("features.updater.newVersionAvailable", "New Version Available"),
-            kind: "info",
-          },
-        );
-      } else {
-        await showNoUpdatesMessage(result.latestVersion);
-      }
-
-      return true;
-    };
-
-    let update;
-
-    try {
-      update = await check();
-    } catch (error) {
-      const handled = await reportReleaseStatus(error);
-
-      if (!handled) {
-        await message(
-          t("features.updater.checkFailedMessage", {
-            defaultValue: "Failed to check for updates. Please try again later.",
-          }),
-          {
-            title: t("features.updater.updateFailed", "Update Failed"),
-            kind: "error",
-          },
-        );
-      }
-
-      return;
-    }
-
-    if (!update) {
-      await showNoUpdatesMessage();
-      return;
-    }
-
-    const shouldInstall = await ask(
-      `A new version (${update.version}) is available. Do you want to install it now?`,
-      { title: t("notifications.newVersionAvailable") },
-    );
-
-    if (!shouldInstall) {
-      return;
-    }
-
-    try {
-      notifications.show({
-        title: t("notifications.updating"),
-        message: t("notifications.downloadingUpdate"),
-        loading: true,
-      });
-
-      await update.downloadAndInstall();
-      await relaunch();
-    } catch (error) {
-      console.error("Update installation failed:", error);
-      await message(
-        t("features.updater.installFailedMessage", {
-          defaultValue: "The update could not be installed. Please try again later.",
-        }),
-        {
-          title: t("features.updater.updateFailed", "Update Failed"),
-          kind: "error",
-        },
-      );
-    }
-  }, [t]);
 
   const handleCut = useCallback(async () => {
     const activeElement = document.activeElement;
@@ -803,12 +690,6 @@ function RootLayout() {
           },
           { label: "divider" },
           {
-            label: t("features.menu.checkUpdate"),
-            id: "check_for_updates",
-            action: checkForUpdates,
-          },
-          { label: "divider" },
-          {
             label: t("features.menu.settings"),
             id: "settings",
             action: () => navigate({ to: "/settings" }),
@@ -1017,7 +898,6 @@ function RootLayout() {
       openNewFile,
       handleClearData,
       handleOpenLogs,
-      checkForUpdates,
       handleAbout,
       navigate,
       setTabs,

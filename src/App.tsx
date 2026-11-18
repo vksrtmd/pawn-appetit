@@ -23,15 +23,11 @@ import "@/styles/global.css";
 
 import ErrorComponent from "@/components/ErrorComponent";
 import { EventMonitor } from "@/components/EventMonitor";
-import { showUpdateNotification, UpdateNotificationModal } from "@/components/UpdateNotification";
-import { VERSION_CHECK_SETTINGS } from "@/config";
 import ThemeProvider from "@/features/themes/components/ThemeProvider";
-import { useVersionCheck } from "@/hooks/useVersionCheck";
 import { commands } from "./bindings";
 import { IS_DEV } from "./config";
 import i18n from "./i18n";
 import { routeTree } from "./routeTree.gen";
-import type { VersionCheckResult } from "./services/version-checker";
 import { getDocumentDir } from "./utils/documentDir";
 import { openFileAndRemember } from "./utils/files";
 
@@ -304,43 +300,10 @@ export default function App() {
   const pieceSet = useAtomValue(pieceSetAtom);
   const fontSize = useAtomValue(fontSizeAtom);
 
-  const [updateModalData, setUpdateModalData] = useState<VersionCheckResult | null>(null);
-
   const { initState, initError, initializeApp } = useAppInitialization();
 
   useFontSizeManager(fontSize);
   usePieceSetManager(pieceSet);
-
-  const { installUpdate, isUpdating } = useVersionCheck({
-    autoCheck: true,
-    onUpdateAvailable: (result) => {
-      if (VERSION_CHECK_SETTINGS.useModalNotification && result.versionInfo) {
-        setUpdateModalData(result);
-      } else if (result.versionInfo) {
-        showUpdateNotification(
-          result.versionInfo,
-          () => installUpdate(),
-          () => setUpdateModalData(result),
-          t,
-        );
-      }
-    },
-    onCheckError: (error) => {
-      info(`Version check failed: ${error}`);
-    },
-    onNoUpdates: () => {
-      info("No updates available");
-    },
-  });
-
-  const handleUpdateModalClose = useCallback(() => {
-    setUpdateModalData(null);
-  }, []);
-
-  const handleUpdateModalUpdate = useCallback(() => {
-    installUpdate();
-    setUpdateModalData(null);
-  }, [installUpdate]);
 
   useEffect(() => {
     let detachConsole: (() => void) | null = null;
@@ -385,16 +348,6 @@ export default function App() {
           {IS_DEV && <EventMonitor />}
           <Notifications />
           <RouterProvider router={router} />
-
-          {updateModalData?.versionInfo && (
-            <UpdateNotificationModal
-              versionInfo={updateModalData.versionInfo}
-              onUpdate={handleUpdateModalUpdate}
-              onSkip={handleUpdateModalClose}
-              onDismiss={handleUpdateModalClose}
-              isUpdating={isUpdating}
-            />
-          )}
         </ContextMenuProvider>
       </ThemeProvider>
     </QueryClientProvider>
