@@ -65,14 +65,10 @@ fn check_argv(manager: &str, pkg: &str) -> Result<Argv, Error> {
 #[tauri::command]
 #[specta::specta]
 pub async fn check_package_manager_available(manager: String) -> Result<bool, Error> {
-    let program = match manager.as_str() {
-        "brew" => "brew",
-        "apt" => "apt",
-        "dnf" => "dnf",
-        "pacman" => "pacman",
-        _ => return Ok(false),
-    };
-    Ok(Command::new(program)
+    if !matches!(manager.as_str(), "brew" | "apt" | "dnf" | "pacman") {
+        return Ok(false);
+    }
+    Ok(Command::new(&manager)
         .arg("--version")
         .output()
         .map(|output| output.status.success())

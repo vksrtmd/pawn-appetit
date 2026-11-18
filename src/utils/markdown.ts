@@ -20,6 +20,7 @@ export function normalizeTiptapMarkdown(comment: string) {
 // Comments come from PGN files and databases the user didn't write, so raw HTML in them
 // is sanitized (GitHub's allowlist: no scripts, event handlers, iframes or javascript: URLs).
 // <u> is added back because the editor's underline becomes <u>.
+// <img> is removed so a comment can't load a remote image and track who opens the file.
 export const commentSanitizeSchema: SanitizeSchema = {
     ...defaultSchema,
     tagNames: [...(defaultSchema.tagNames ?? []).filter((t) => t !== "img"), "u"],

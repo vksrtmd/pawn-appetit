@@ -85,13 +85,6 @@ impl TelemetryConfig {
         log::info!("Telemetry enabled state updated to: {}", enabled);
         Ok(())
     }
-
-    pub fn mark_initial_run_completed(&mut self, app: &AppHandle) -> Result<(), TelemetryError> {
-        self.initial_run_completed = true;
-        self.save(app)?;
-        log::info!("Initial run marked as completed");
-        Ok(())
-    }
 }
 
 fn get_user_id(app: &AppHandle) -> String {
@@ -231,27 +224,25 @@ fn track_event_safe(app: &AppHandle, event_name: &str) {
     });
 }
 
+/// Returns whether to send `initial_run` now, marking it completed only when it is sent.
+fn take_initial_run(config: &mut TelemetryConfig) -> bool {
+    if !config.enabled || config.initial_run_completed {
+        return false;
+    }
+    config.initial_run_completed = true;
+    true
+}
+
 pub fn handle_initial_run_telemetry(app: &AppHandle) -> Result<(), String> {
     let mut config = TelemetryConfig::load(app)
         .map_err(|e| format!("Failed to load telemetry config: {}", e))?;
 
-    if config.enabled && !config.initial_run_completed {
+    if take_initial_run(&mut config) {
         log::info!("Initial run detected and telemetry enabled. Tracking 'initial_run' event.");
-
         track_event_safe(app, "initial_run");
-
         config
-            .mark_initial_run_completed(app)
+            .save(app)
             .map_err(|e| format!("Failed to mark initial run as completed: {}", e))?;
-    } else if !config.enabled {
-        log::info!("Telemetry disabled, skipping initial_run tracking");
-        if !config.initial_run_completed {
-            config
-                .mark_initial_run_completed(app)
-                .map_err(|e| format!("Failed to mark initial run as completed: {}", e))?;
-        }
-    } else {
-        log::info!("Initial run already completed, skipping tracking");
     }
 
     Ok(())
@@ -295,5 +286,16 @@ mod tests {
         let config = TelemetryConfig::default();
         assert!(!config.enabled);
         assert!(!config.initial_run_completed);
+    }
+
+    #[test]
+    fn nothing_is_sent_before_opt_in_and_initial_run_waits_for_it() {
+        let mut config = TelemetryConfig::default();
+        assert!(!take_initial_run(&mut config));
+        assert!(!take_initial_run(&mut config));
+
+        config.enabled = true;
+        assert!(take_initial_run(&mut config));
+        assert!(!take_initial_run(&mut config));
     }
 }
