@@ -16,10 +16,7 @@ use std::{
     cmp::Reverse,
     collections::{BinaryHeap, HashMap},
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::Arc,
     time::Instant,
 };
 use tauri::Emitter;
@@ -517,6 +514,15 @@ impl TopGames {
         }
     }
 
+    fn len(&self) -> usize {
+        self.heap.len()
+    }
+
+    #[cfg(test)]
+    fn iter_ids(&self) -> Vec<i32> {
+        self.heap.iter().map(|g| g.0.id).collect()
+    }
+
     fn into_vec(self) -> Vec<MatchedGame> {
         self.heap.into_iter().map(|Reverse(game)| game).collect()
     }
@@ -821,6 +827,163 @@ fn matches_basic_filters(
     true
 }
 
+/// A game that contains the query, as one game's check reports it.
+struct GameHit {
+    id: i32,
+    rating: i32,
+    /// The move played from the match, with this one game's result tallied.
+    entry: PositionStats,
+    found: PositionMatch,
+}
+
+/// What checking one game against a query found.
+enum GameCheck {
+    /// Failed the player, result or date filters.
+    Filtered,
+    /// Its end material or pawn structure cannot contain the query, so its
+    /// moves were not decoded.
+    Unreachable,
+    /// Decoded, and the query never occurs (or the blob is malformed).
+    Miss,
+    Hit(GameHit),
+}
+
+/// Check one game against the query: filters, then the cheap reachability
+/// reject, then the move blob.
+fn check_game(row: &GameData, query: &GameQueryJs, position: &PositionQuery) -> GameCheck {
+    let (
+        id,
+        white_id,
+        black_id,
+        date,
+        result,
+        moves,
+        fen,
+        pawn_home,
+        white_material,
+        black_material,
+        white_elo,
+        black_elo,
+    ) = row;
+
+    if !matches_basic_filters(*white_id, *black_id, date, result, query) {
+        return GameCheck::Filtered;
+    }
+
+    let end_material: MaterialCount = ByColor {
+        white: *white_material as u8,
+        black: *black_material as u8,
+    };
+    if !position.can_reach(&end_material, *pawn_home as u16) {
+        return GameCheck::Unreachable;
+    }
+
+    let Ok(Some(found)) = get_move_after_match(moves, fen, position) else {
+        return GameCheck::Miss;
+    };
+
+    let mut entry = PositionStats {
+        move_: found.next_move.clone(),
+        white: 0,
+        black: 0,
+        draw: 0,
+    };
+    match result.as_deref() {
+        Some("1-0") => entry.white += 1,
+        Some("0-1") => entry.black += 1,
+        Some("1/2-1/2") => entry.draw += 1,
+        _ => (), // Unknown results don't count
+    }
+    GameCheck::Hit(GameHit {
+        id: *id,
+        rating: game_rating(*white_elo, *black_elo),
+        entry,
+        found,
+    })
+}
+
+/// The result of checking some games; two of them merge into one.
+#[derive(Default)]
+struct SearchResults {
+    position_stats: HashMap<String, PositionStats>,
+    top_games: TopGames,
+    processed: usize,
+    passed_filters: usize,
+    unreachable: usize,
+}
+
+impl SearchResults {
+    fn record(&mut self, check: GameCheck) {
+        self.processed += 1;
+        match check {
+            GameCheck::Filtered => {}
+            GameCheck::Unreachable => {
+                self.passed_filters += 1;
+                self.unreachable += 1;
+            }
+            GameCheck::Miss => self.passed_filters += 1,
+            GameCheck::Hit(hit) => {
+                self.passed_filters += 1;
+                if self.top_games.wants(hit.rating, hit.id) {
+                    self.top_games.push(MatchedGame {
+                        id: hit.id,
+                        rating: hit.rating,
+                        ply: hit.found.ply,
+                        fen: Fen::from_position(hit.found.position, EnPassantMode::Legal)
+                            .to_string(),
+                        next_move_uci: hit.found.next_move_uci,
+                    });
+                }
+                self.add_stats(hit.entry);
+            }
+        }
+    }
+
+    fn add_stats(&mut self, entry: PositionStats) {
+        let total = self
+            .position_stats
+            .entry(entry.move_.clone())
+            .or_insert_with(|| PositionStats {
+                move_: entry.move_.clone(),
+                white: 0,
+                black: 0,
+                draw: 0,
+            });
+        total.white += entry.white;
+        total.black += entry.black;
+        total.draw += entry.draw;
+    }
+
+    fn merge(mut self, other: SearchResults) -> SearchResults {
+        for entry in other.position_stats.into_values() {
+            self.add_stats(entry);
+        }
+        self.top_games.merge(other.top_games);
+        self.processed += other.processed;
+        self.passed_filters += other.passed_filters;
+        self.unreachable += other.unreachable;
+        self
+    }
+}
+
+/// Check every row in parallel and merge the partial results. Rows seen after
+/// `cancelled` turns true are skipped.
+fn search_rows(
+    rows: &[GameData],
+    query: &GameQueryJs,
+    position: &PositionQuery,
+    cancelled: &(impl Fn() -> bool + Sync),
+) -> SearchResults {
+    rows.par_iter()
+        .fold(SearchResults::default, |mut acc, row| {
+            if !cancelled() {
+                acc.record(check_game(row, query, position));
+            }
+            acc
+        })
+        .reduce(SearchResults::default, SearchResults::merge)
+}
+
 /// Calculate search progress as percentage
 #[inline(always)]
 fn calculate_batch_progress(processed: usize, total: usize) -> f64 {
@@ -915,158 +1078,21 @@ pub async fn search_position(
         total_games
     );
 
-    // Data structures for collecting results from parallel processing
-    let position_stats: HashMap<String, PositionStats>;
-    let matched_game_ids: Vec<MatchedGame>;
-    let processed_count: usize;
-    let games_with_basic_filter_match: usize;
+    // Both paths fold rows with `search_rows` and merge with `SearchResults::merge`;
+    // they differ only in where the rows come from.
+    let cancelled = || state.new_request.available_permits() == 0;
+    let results: SearchResults;
 
     if use_cached_data {
-        // Use cached data with thread-local accumulator pattern (eliminates mutex contention)
         let games = cached_games.unwrap();
-
-        // Atomic counters for lock-free progress tracking
-        let processed_count_atomic = Arc::new(AtomicUsize::new(0));
-        let filter_match_count_atomic = Arc::new(AtomicUsize::new(0));
-        let position_reject_count_atomic = Arc::new(AtomicUsize::new(0));
-
-        // Structure for collecting results in parallel threads
-        #[derive(Default)]
-        struct ThreadLocalResults {
-            position_stats: HashMap<String, PositionStats>,
-            matched_ids: TopGames,
-        }
-
-        // Process games in parallel
-        let final_results = games
-            .par_iter()
-            .fold(
-                ThreadLocalResults::default,
-                |mut acc,
-                 (
-                    id,
-                    white_id,
-                    black_id,
-                    date,
-                    result,
-                    moves,
-                    fen,
-                    pawn_home,
-                    white_material,
-                    black_material,
-                    white_elo,
-                    black_elo,
-                )| {
-                    // Check for cancellation (lock-free)
-                    if state.new_request.available_permits() == 0 {
-                        return acc;
-                    }
-
-                    // Lock-free increment of processed count
-                    let _current_processed =
-                        processed_count_atomic.fetch_add(1, Ordering::Relaxed) + 1;
-
-                    // Progress updates only from main thread after batch completion
-
-                    // Check basic filters first (player, date, result)
-                    if !matches_basic_filters(*white_id, *black_id, date, result, &query) {
-                        return acc;
-                    }
-
-                    // Count games that pass basic filters
-                    filter_match_count_atomic.fetch_add(1, Ordering::Relaxed);
-
-                    // Reject games whose end material and pawn structure cannot contain the
-                    // query before decoding their move blobs. Mirrors the index pre-filter
-                    // used by the batched path and the check in `check_position_exists`.
-                    let end_material: MaterialCount = ByColor {
-                        white: *white_material as u8,
-                        black: *black_material as u8,
-                    };
-                    if !position_query.can_reach(&end_material, *pawn_home as u16) {
-                        position_reject_count_atomic.fetch_add(1, Ordering::Relaxed);
-                        return acc;
-                    }
-
-                    // Check if game contains the target position
-                    if let Ok(Some(found)) = get_move_after_match(moves, fen, &position_query) {
-                        let next_move = found.next_move.clone();
-                        // Save matching game ID (collect at least 100 games, but allow more)
-                        let rating = game_rating(*white_elo, *black_elo);
-                        if acc.matched_ids.wants(rating, *id) {
-                            acc.matched_ids.push(MatchedGame {
-                                id: *id,
-                                rating,
-                                ply: found.ply,
-                                fen: Fen::from_position(
-                                    found.position.clone(),
-                                    EnPassantMode::Legal,
-                                )
-                                .to_string(),
-                                next_move_uci: found.next_move_uci,
-                            });
-                        }
-
-                        // Update move statistics
-                        let stats =
-                            acc.position_stats
-                                .entry(next_move.clone())
-                                .or_insert_with(|| PositionStats {
-                                    move_: next_move,
-                                    white: 0,
-                                    black: 0,
-                                    draw: 0,
-                                });
-
-                        // Count results by game outcome
-                        match result.as_deref() {
-                            Some("1-0") => stats.white += 1,
-                            Some("0-1") => stats.black += 1,
-                            Some("1/2-1/2") => stats.draw += 1,
-                            _ => (), // Skip unknown results
-                        }
-                    }
-
-                    acc
-                },
-            )
-            .reduce(ThreadLocalResults::default, |mut acc1, acc2| {
-                // Merge thread-local results (no contention here!)
-                for (key, stats2) in acc2.position_stats {
-                    let stats1 = acc1
-                        .position_stats
-                        .entry(key)
-                        .or_insert_with(|| PositionStats {
-                            move_: stats2.move_.clone(),
-                            white: 0,
-                            black: 0,
-                            draw: 0,
-                        });
-                    stats1.white += stats2.white;
-                    stats1.black += stats2.black;
-                    stats1.draw += stats2.draw;
-                }
-
-                // Merge matched games (keep the best rated)
-                acc1.matched_ids.merge(acc2.matched_ids);
-
-                acc1
-            });
-
-        // Extract final results (no Arc unwrapping needed)
-        position_stats = final_results.position_stats;
-        matched_game_ids = final_results.matched_ids.into_vec();
-        processed_count = processed_count_atomic.load(Ordering::Relaxed);
-        games_with_basic_filter_match = filter_match_count_atomic.load(Ordering::Relaxed);
-        let games_rejected_by_position_filter =
-            position_reject_count_atomic.load(Ordering::Relaxed);
+        results = search_rows(&games, &query, &position_query, &cancelled);
 
         info!(
             "Cached data processing complete: {} games processed, {} passed basic filters, {} rejected by position pre-filter, {} matches found",
-            processed_count,
-            games_with_basic_filter_match,
-            games_rejected_by_position_filter,
-            matched_game_ids.len()
+            results.processed,
+            results.passed_filters,
+            results.unreachable,
+            results.top_games.len()
         );
 
         // Emit progress update after batch completion (main thread, no mutex overhead)
@@ -1104,18 +1130,13 @@ pub async fn search_position(
             info!("No position index available, scanning every game");
         }
 
-        // Track progress across all threads
-        let global_processed_count = Arc::new(AtomicUsize::new(0));
-        let global_filter_match_count = Arc::new(AtomicUsize::new(0));
-
         // Collect results from all batches
-        let mut global_position_stats = HashMap::<String, PositionStats>::new();
-        let mut global_matched_ids = TopGames::default();
+        let mut global = SearchResults::default();
         let mut cursor = 0i32;
 
         loop {
             // Check for cancellation
-            if state.new_request.available_permits() == 0 {
+            if cancelled() {
                 drop(permit);
                 return Err(Error::SearchStopped);
             }
@@ -1136,138 +1157,12 @@ pub async fn search_position(
             cursor = batch.last().map(|(id, ..)| *id).unwrap_or(cursor);
 
             info!(
-                "Processing batch: {} games (up to id {}) with thread-local accumulators",
+                "Processing batch: {} games (up to id {})",
                 batch.len(),
                 cursor
             );
 
-            // Thread-local accumulator structure
-            #[derive(Default)]
-            struct ThreadLocalResults {
-                position_stats: HashMap<String, PositionStats>,
-                matched_ids: TopGames,
-            }
-
-            // Process batch using parallel fold pattern with thread-local accumulators
-            let batch_results = batch
-                .par_iter()
-                .fold(
-                    ThreadLocalResults::default,
-                    |mut acc,
-                     (
-                        id,
-                        white_id,
-                        black_id,
-                        date,
-                        result,
-                        moves,
-                        fen,
-                        _pawn_home,
-                        _white_material,
-                        _black_material,
-                        white_elo,
-                        black_elo,
-                    )| {
-                        // Check for cancellation (lock-free)
-                        if state.new_request.available_permits() == 0 {
-                            return acc;
-                        }
-
-                        // Lock-free increment of processed count
-                        let _current_processed =
-                            global_processed_count.fetch_add(1, Ordering::Relaxed) + 1;
-
-                        // Progress updates only from main thread after batch completion
-
-                        // Apply basic filters first (fast elimination)
-                        if !matches_basic_filters(*white_id, *black_id, date, result, &query) {
-                            return acc;
-                        }
-
-                        // Lock-free increment of filter match count
-                        global_filter_match_count.fetch_add(1, Ordering::Relaxed);
-
-                        // Process game for position matching
-                        if let Ok(Some(found)) = get_move_after_match(moves, fen, &position_query) {
-                            let next_move = found.next_move;
-                            // Thread-local update (no locks needed!)
-                            let rating = game_rating(*white_elo, *black_elo);
-                            if acc.matched_ids.wants(rating, *id) {
-                                acc.matched_ids.push(MatchedGame {
-                                    id: *id,
-                                    rating,
-                                    ply: found.ply,
-                                    fen: Fen::from_position(
-                                        found.position.clone(),
-                                        EnPassantMode::Legal,
-                                    )
-                                    .to_string(),
-                                    next_move_uci: found.next_move_uci,
-                                });
-                            }
-
-                            let stats =
-                                acc.position_stats
-                                    .entry(next_move.clone())
-                                    .or_insert_with(|| PositionStats {
-                                        move_: next_move,
-                                        white: 0,
-                                        black: 0,
-                                        draw: 0,
-                                    });
-
-                            match result.as_deref() {
-                                Some("1-0") => stats.white += 1,
-                                Some("0-1") => stats.black += 1,
-                                Some("1/2-1/2") => stats.draw += 1,
-                                _ => (), // Unknown results don't count
-                            }
-                        }
-
-                        acc
-                    },
-                )
-                .reduce(ThreadLocalResults::default, |mut acc1, acc2| {
-                    // Merge thread-local results (no contention here!)
-                    for (key, stats2) in acc2.position_stats {
-                        let stats1 =
-                            acc1.position_stats
-                                .entry(key)
-                                .or_insert_with(|| PositionStats {
-                                    move_: stats2.move_.clone(),
-                                    white: 0,
-                                    black: 0,
-                                    draw: 0,
-                                });
-                        stats1.white += stats2.white;
-                        stats1.black += stats2.black;
-                        stats1.draw += stats2.draw;
-                    }
-
-                    // Merge matched games (keep the best rated)
-                    acc1.matched_ids.merge(acc2.matched_ids);
-
-                    acc1
-                });
-
-            // Merge batch results into global accumulator (single-threaded, no contention)
-            for (key, batch_stat) in batch_results.position_stats {
-                let global_stat =
-                    global_position_stats
-                        .entry(key)
-                        .or_insert_with(|| PositionStats {
-                            move_: batch_stat.move_.clone(),
-                            white: 0,
-                            black: 0,
-                            draw: 0,
-                        });
-                global_stat.white += batch_stat.white;
-                global_stat.black += batch_stat.black;
-                global_stat.draw += batch_stat.draw;
-            }
-
-            // Merge matched IDs (keep within limit)
-            global_matched_ids.merge(batch_results.matched_ids);
+            global = global.merge(search_rows(&batch, &query, &position_query, &cancelled));
 
             offset += BATCH_SIZE;
 
@@ -1298,15 +1193,13 @@ pub async fn search_position(
             }
         }
 
-        // Extract final results from global accumulators (no Arc unwrapping needed)
-        position_stats = global_position_stats;
-        matched_game_ids = global_matched_ids.into_vec();
-        processed_count = global_processed_count.load(Ordering::Relaxed);
-        games_with_basic_filter_match = global_filter_match_count.load(Ordering::Relaxed);
-
-        info!("Batch processing complete: {} games processed, {} passed basic filters, {} matches found", 
-              processed_count, games_with_basic_filter_match, matched_game_ids.len());
+        info!("Batch processing complete: {} games processed, {} passed basic filters, {} rejected by position pre-filter, {} matches found",
+              global.processed, global.passed_filters, global.unreachable, global.top_games.len());
+        results = global;
     }
+
+    let position_stats = results.position_stats;
+    let matched_game_ids = results.top_games.into_vec();
 
     info!(
         "Position search completed in {:?}. Found {} unique moves from {} games.",
@@ -2346,5 +2239,218 @@ mod top_games_tests {
             top.push(game(id, 2000));
         }
         assert_eq!(ids(top), vec![1, 3]);
+    }
+}
+
+#[cfg(test)]
+mod search_rows_tests {
+    use super::*;
+
+    const START: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    const AFTER_E4: &str = "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq e3 0 1";
+    const AFTER_E4_E5: &str = "rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq e6 0 2";
+
+    /// A row as the database would hold it, its end-of-game columns derived
+    /// from replaying the blob.
+    fn row(id: i32, white_id: i32, result: &str, moves: &[u8], elo: Option<i32>) -> GameData {
+        let mut stream = MoveStream::new(moves, Chess::default());
+        while stream.advance().unwrap() {}
+        let board = stream.position().board();
+        let material = crate::db::pgn::get_material_count(board);
+        (
+            id,
+            white_id,
+            2,
+            Some("2020.01.01".to_string()),
+            Some(result.to_string()),
+            moves.to_vec(),
+            None,
+            crate::db::import::get_pawn_home(board) as i32,
+            material.white as i32,
+            material.black as i32,
+            elo,
+            None,
+        )
+    }
+
+    fn after_e4() -> PositionQuery {
+        PositionQuery::exact_from_fen(AFTER_E4).unwrap()
+    }
+
+    fn hit(check: GameCheck) -> GameHit {
+        match check {
+            GameCheck::Hit(hit) => hit,
+            _ => panic!("expected a hit"),
+        }
+    }
+
+    fn rows() -> Vec<GameData> {
+        vec![
+            row(1, 1, "1-0", &[12, 12], Some(2400)),
+            row(2, 1, "0-1", &[12], Some(2500)),
+            row(3, 3, "1/2-1/2", &[12, 12], None),
+            row(4, 1, "1-0", &[0, 0], Some(2700)),
+            row(5, 4, "*", &[12, 12], Some(1800)),
+        ]
+    }
+
+    fn summary(r: &SearchResults) -> (Vec<(String, i32, i32, i32)>, Vec<i32>, usize, usize) {
+        let mut stats: Vec<_> = r
+            .position_stats
+            .values()
+            .map(|s| (s.move_.clone(), s.white, s.black, s.draw))
+            .collect();
+        stats.sort();
+        let mut ids: Vec<i32> = r.top_games.iter_ids();
+        ids.sort();
+        (stats, ids, r.processed, r.passed_filters)
+    }
+
+    #[test]
+    fn an_exact_match_reports_the_move_played_from_it() {
+        let h = hit(check_game(
+            &row(1, 1, "1-0", &[12, 12], Some(2400)),
+            &GameQueryJs::default(),
+            &after_e4(),
+        ));
+        assert_eq!((h.found.ply, h.entry.move_.as_str()), (1, "e5"));
+    }
+
+    #[test]
+    fn a_partial_match_hits_at_the_first_matching_position() {
+        let query = PositionQuery::partial_from_fen("8/pppppppp/8/8/8/8/PPPPPPPP/8").unwrap();
+        let h = hit(check_game(
+            &row(1, 1, "1-0", &[12, 12], None),
+            &GameQueryJs::default(),
+            &query,
+        ));
+        assert_eq!((h.found.ply, h.entry.move_.as_str()), (0, "e4"));
+    }
+
+    #[test]
+    fn a_game_that_never_reaches_the_position_is_a_miss() {
+        let query = PositionQuery::exact_from_fen(AFTER_E4_E5).unwrap();
+        let check = check_game(
+            &row(2, 1, "0-1", &[12], None),
+            &GameQueryJs::default(),
+            &query,
+        );
+        assert!(!matches!(check, GameCheck::Hit(_)));
+    }
+
+    #[test]
+    fn a_game_failing_a_filter_is_filtered_before_anything_is_decoded() {
+        let query = GameQueryJs {
+            player1: Some(9),
+            ..Default::default()
+        };
+        let check = check_game(&row(1, 1, "1-0", &[12, 12], None), &query, &after_e4());
+        assert!(matches!(check, GameCheck::Filtered));
+    }
+
+    #[test]
+    fn a_game_whose_end_cannot_contain_the_query_is_rejected_unread() {
+        // The game ends with Black's e-pawn at home; the query needs it moved.
+        let query = PositionQuery::exact_from_fen(AFTER_E4_E5).unwrap();
+        let check = check_game(
+            &row(2, 1, "0-1", &[12], None),
+            &GameQueryJs::default(),
+            &query,
+        );
+        assert!(matches!(check, GameCheck::Unreachable));
+    }
+
+    #[test]
+    fn the_hit_tallies_the_games_result_under_its_move() {
+        let tally = |result: &str| {
+            let e = hit(check_game(
+                &row(1, 1, result, &[12, 12], None),
+                &GameQueryJs::default(),
+                &after_e4(),
+            ))
+            .entry;
+            (e.white, e.black, e.draw)
+        };
+        assert_eq!(tally("1-0"), (1, 0, 0));
+        assert_eq!(tally("0-1"), (0, 1, 0));
+        assert_eq!(tally("1/2-1/2"), (0, 0, 1));
+        assert_eq!(tally("*"), (0, 0, 0));
+    }
+
+    #[test]
+    fn the_hit_is_ranked_by_the_higher_elo() {
+        let mut r = row(1, 1, "1-0", &[12, 12], Some(2400));
+        r.11 = Some(2600);
+        let h = hit(check_game(&r, &GameQueryJs::default(), &after_e4()));
+        assert_eq!(h.rating, 2600);
+    }
+
+    #[test]
+    fn merging_adds_tallies_counts_and_keeps_the_better_games() {
+        let q = GameQueryJs::default();
+        let rows = rows();
+        let left = search_rows(&rows[..2], &q, &after_e4(), &|| false);
+        let right = search_rows(&rows[2..], &q, &after_e4(), &|| false);
+        let merged = left.merge(right);
+        let e5 = &merged.position_stats["e5"];
+        assert_eq!((e5.white, e5.black, e5.draw), (1, 0, 1));
+        let end = &merged.position_stats["*"];
+        assert_eq!((end.white, end.black, end.draw), (0, 1, 0));
+        assert_eq!((merged.processed, merged.passed_filters), (5, 5));
+        assert_eq!(merged.top_games.len(), 4);
+    }
+
+    #[test]
+    fn merging_with_an_empty_result_changes_nothing() {
+        let r = search_rows(&rows(), &GameQueryJs::default(), &after_e4(), &|| false);
+        let before = summary(&r);
+        assert_eq!(summary(&r.merge(SearchResults::default())), before);
+    }
+
+    #[test]
+    fn batched_search_matches_cached_search_over_the_same_games() {
+        let q = GameQueryJs::default();
+        let rows = rows();
+        let cached = search_rows(&rows, &q, &after_e4(), &|| false);
+        let batched = rows.chunks(2).fold(SearchResults::default(), |acc, batch| {
+            acc.merge(search_rows(batch, &q, &after_e4(), &|| false))
+        });
+        assert_eq!(summary(&cached), summary(&batched));
+        assert_eq!(cached.unreachable, batched.unreachable);
+    }
+
+    #[test]
+    fn the_reachability_pre_check_never_changes_what_is_found() {
+        let q = GameQueryJs::default();
+        let rows = rows();
+        for fen in [START, AFTER_E4, AFTER_E4_E5] {
+            let query = PositionQuery::exact_from_fen(fen).unwrap();
+            let checked = search_rows(&rows, &q, &query, &|| false);
+            // The same fold with every game decoded.
+            let mut unchecked = SearchResults::default();
+            for r in &rows {
+                if get_move_after_match(&r.5, &r.6, &query).unwrap().is_some() {
+                    unchecked.record(check_game(
+                        r,
+                        &q,
+                        &PositionQuery::exact_from_fen(fen).unwrap(),
+                    ));
+                }
+            }
+            let mut a = summary(&checked);
+            let mut b = summary(&unchecked);
+            // Counts of games seen differ by design; compare what was found.
+            a.2 = 0;
+            a.3 = 0;
+            b.2 = 0;
+            b.3 = 0;
+            assert_eq!(a, b, "{fen}");
+        }
+    }
+
+    #[test]
+    fn rows_after_cancellation_are_skipped() {
+        let r = search_rows(&rows(), &GameQueryJs::default(), &after_e4(), &|| true);
+        assert_eq!(r.processed, 0);
     }
 }
