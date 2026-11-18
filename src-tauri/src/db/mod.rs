@@ -15,21 +15,18 @@ mod search;
 mod write;
 
 use crate::{
-    db::{encoding::extract_main_line_moves, import::insert_to_db, models::*, schema::*},
+    db::{encoding::extract_main_line_moves, models::*, schema::*},
     error::Result,
     opening::get_opening_from_setup,
     AppState,
 };
 use dashmap::DashMap;
 use diesel::{connection::SimpleConnection, dsl::sql, prelude::*, sql_query, sql_types::Text};
-use pgn::Importer;
-use pgn_reader::BufferedReader;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use shakmaty::{Chess, EnPassantMode, Position};
 use specta::Type;
 use std::{
-    fs::File,
     path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
     time::Instant,
@@ -74,8 +71,6 @@ pub async fn convert_pgn(
     state: tauri::State<'_, AppState>,
 ) -> Result<()> {
     let description = description.unwrap_or_default();
-    let extension = file.extension();
-
     let db_exists = db_path.exists();
 
     // create the database file
@@ -96,34 +91,14 @@ pub async fn convert_pgn(
     // Created before the import loop: insert_to_db checks it per game.
     db.batch_execute(GAMES_IDENTITY_INDEX_SQL)?;
 
-    let file = File::open(&file)?;
-
-    let uncompressed: Box<dyn std::io::Read + Send> = if extension == Some("bz2".as_ref()) {
-        Box::new(bzip2::read::MultiBzDecoder::new(file))
-    } else if extension == Some("zst".as_ref()) {
-        Box::new(zstd::Decoder::new(file)?)
-    } else {
-        Box::new(file)
-    };
-
     // start counting time
     let start = Instant::now();
 
-    let mut importer = Importer::new(timestamp.map(|t| t as i64));
     write::apply(db, write::Change::GamesInserted, |db| {
-        for (i, game) in BufferedReader::new(uncompressed)
-            .into_iter(&mut importer)
-            .flatten()
-            .flatten()
-            .enumerate()
-        {
-            if i % 1000 == 0 {
-                let elapsed = start.elapsed().as_millis() as u32;
-                app.emit("convert_progress", (i, elapsed)).unwrap();
-            }
-            insert_to_db(db, &game)?;
-        }
-        Ok(())
+        import::import_file(db, &file, timestamp.map(|t| t as i64), |i| {
+            let elapsed = start.elapsed().as_millis() as u32;
+            app.emit("convert_progress", (i, elapsed)).unwrap();
+        })
     })?;
 
     if !db_exists {
@@ -1030,4 +1005,23 @@ pub async fn merge_players(
     let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
 
     write::merge_players(db, player1, player2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn indexed_follows_the_named_indexes_not_the_identity_index() {
+        let mut conn = SqliteConnection::establish(":memory:").unwrap();
+        core::init_db(&mut conn, "T", "D").unwrap();
+        conn.batch_execute(GAMES_IDENTITY_INDEX_SQL).unwrap();
+        assert!(!check_index_exists(&mut conn).unwrap());
+
+        conn.batch_execute(INDEXES_SQL).unwrap();
+        assert!(check_index_exists(&mut conn).unwrap());
+
+        conn.batch_execute(DELETE_INDEXES_SQL).unwrap();
+        assert!(!check_index_exists(&mut conn).unwrap());
+    }
 }

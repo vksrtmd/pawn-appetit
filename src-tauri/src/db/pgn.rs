@@ -275,9 +275,9 @@ impl Visitor for Importer {
         } else if key == b"EndTime" {
             self.game.end_time = Some(String::from_utf8_lossy(value.as_bytes()).to_string());
         } else if key == b"Site" {
-            self.game.site_name = Some(String::from_utf8_lossy(value.as_bytes()).to_string());
+            self.game.site_name = Some(value.decode_utf8_lossy().into_owned());
         } else if key == b"Event" {
-            self.game.event_name = Some(String::from_utf8_lossy(value.as_bytes()).to_string());
+            self.game.event_name = Some(value.decode_utf8_lossy().into_owned());
         } else if key == b"Result" {
             self.game.result = Some(String::from_utf8_lossy(value.as_bytes()).to_string());
         } else if key == b"FEN" {
