@@ -3,11 +3,30 @@
 use std::path::{Path, PathBuf};
 
 /// Write an executable shell script `name` with `body` into `dir`.
+///
+/// Another test thread forking while the file is open for writing keeps that descriptor until
+/// its exec, and executing the file meanwhile fails with `ETXTBSY`. So this returns only once
+/// the script has run (as a no-op probe) without that error.
 pub fn script(dir: &Path, name: &str, body: &str) -> PathBuf {
     use std::os::unix::fs::PermissionsExt;
     let path = dir.join(name);
-    std::fs::write(&path, format!("#!/bin/sh\n{body}")).unwrap();
+    std::fs::write(
+        &path,
+        format!("#!/bin/sh\n[ -n \"$ENGINE_PROBE\" ] && exit 0\n{body}"),
+    )
+    .unwrap();
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    for _ in 0..500 {
+        match std::process::Command::new(&path)
+            .env("ENGINE_PROBE", "1")
+            .status()
+        {
+            Err(e) if e.kind() == std::io::ErrorKind::ExecutableFileBusy => {
+                std::thread::sleep(std::time::Duration::from_millis(10))
+            }
+            _ => break,
+        }
+    }
     path
 }
 
