@@ -6,6 +6,7 @@ mod game_index;
 mod import;
 mod maintenance;
 mod models;
+mod move_blob;
 mod ops;
 mod pgn;
 mod progress;
