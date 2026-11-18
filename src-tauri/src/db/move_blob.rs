@@ -212,6 +212,7 @@ mod tests {
     fn a_skipped_variation_must_be_terminated() {
         let blob = [12, START_VARIATION, 0];
         let mut cursor = MoveBlobCursor::new(&blob, Chess::default());
+        assert!(cursor.next_main_move().unwrap().is_some());
         assert!(cursor.next_main_move().is_err());
     }
 
