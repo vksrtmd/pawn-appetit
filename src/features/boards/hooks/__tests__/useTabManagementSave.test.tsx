@@ -1,8 +1,10 @@
+import { z } from "zod";
 import { renderHook } from "@testing-library/react";
 import { getDefaultStore } from "jotai";
 import { beforeEach, expect, test, vi } from "vitest";
 
-const { save, openConfirmModal } = vi.hoisted(() => ({
+const { save, openConfirmModal, killEngines } = vi.hoisted(() => ({
+  killEngines: vi.fn<(...a: unknown[]) => Promise<unknown>>(),
   save: vi.fn<(...a: unknown[]) => Promise<string>>(),
   openConfirmModal: vi.fn<(o: { onConfirm: () => Promise<void> }) => void>(),
 }));
@@ -16,15 +18,23 @@ vi.mock("@tauri-apps/plugin-log", () => ({
 }));
 vi.mock("react-i18next", () => ({ useTranslation: () => ({ t: (k: string) => k }) }));
 vi.mock("@/bindings", () => ({
-  commands: { killEngines: async () => ({ status: "ok", data: null }) },
+  commands: { killEngines },
 }));
-vi.mock("@/state/tabSession", () => ({ save }));
+vi.mock("@/state/tabSession", async (original) => ({
+  ...(await original<typeof import("@/state/tabSession")>()),
+  save,
+}));
+vi.mock("@/features/files/utils/file", () => ({
+  fileMetadataSchema: z.any(),
+  invalidateFileIndex: vi.fn<() => void>(),
+}));
 vi.mock("@mantine/modals", () => ({ modals: { openConfirmModal } }));
 vi.mock("@tanstack/react-router", () => ({ useLoaderData: () => ({ documentDir: "/docs" }) }));
 
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import type { Tab } from "@/utils/tabs";
 import { defaultTree } from "@/utils/treeReducer";
+import { open, setSideKey } from "@/state/tabSession";
 import { useTabManagement } from "../useTabManagement";
 
 const mk = (value: string): Tab =>
@@ -44,6 +54,7 @@ const mk = (value: string): Tab =>
 
 beforeEach(() => {
   vi.clearAllMocks();
+  killEngines.mockResolvedValue({ status: "ok", data: null });
   const jotai = getDefaultStore();
   jotai.set(tabsAtom, [mk("a"), mk("b")]);
   jotai.set(activeTabAtom, "a");
@@ -77,4 +88,16 @@ test("a cancelled save-as keeps the tab open", async () => {
   save.mockResolvedValue("cancelled");
   await openConfirmModal.mock.calls[0][0].onConfirm();
   expect(getDefaultStore().get(tabsAtom)).toHaveLength(2);
+});
+
+test("closing a tab with the close button disposes it", async () => {
+  getDefaultStore().set(tabsAtom, [mk("a"), mk("c")]);
+  open("c", defaultTree());
+  setSideKey("c", "localGameId", "g1");
+  const { result } = renderHook(() => useTabManagement());
+
+  await result.current.closeTab("c");
+
+  expect(Object.keys(sessionStorage).filter((k) => k === "c" || k.startsWith("c_"))).toEqual([]);
+  expect(killEngines).toHaveBeenCalledWith("c");
 });

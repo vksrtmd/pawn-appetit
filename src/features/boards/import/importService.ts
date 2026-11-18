@@ -11,7 +11,7 @@ import { notifyPgnParseError } from "@/utils/pgnParseError";
 import { createFile, createTempImportFile, openFile } from "@/utils/files";
 import { getLichessGame } from "@/utils/lichess/api";
 import { parseMultiplePgnGames } from "@/utils/pgnUtils";
-import { serializeStorageValue } from "@/utils/tabStateStorage";
+import { open } from "@/state/tabSession";
 import type { Tab } from "@/utils/tabs";
 import { defaultTree, getGameName, type TreeState } from "@/utils/treeReducer";
 
@@ -316,7 +316,7 @@ async function importLinkGame(
         throw e;
     });
     context.setCurrentTab((prev) => {
-        sessionStorage.setItem(prev.value, serializeStorageValue({ version: 0, state: tree }));
+        open(prev.value, tree);
         return {
             ...prev,
             name: getGameName(tree.headers),
@@ -350,7 +350,7 @@ function importFenPosition(
     context.setCurrentTab((prev) => {
         const tree = defaultTree(parsedFen);
         tree.headers.fen = parsedFen;
-        sessionStorage.setItem(prev.value, serializeStorageValue({ version: 0, state: tree }));
+        open(prev.value, tree);
         return {
             ...prev,
             name: request.analysisTitle,
