@@ -178,7 +178,16 @@ impl GameTree {
 
 impl std::fmt::Display for GameTree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.pretty_print(f, None) {
+        self.from_position(None).fmt(f)
+    }
+}
+
+/// A game tree printed from a given start position (`None`: the standard one).
+pub struct FromPosition<'a>(&'a GameTree, Option<Chess>);
+
+impl std::fmt::Display for FromPosition<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0.pretty_print(f, self.1.clone()) {
             Ok(()) => Ok(()),
             Err(Error::Fmt(err)) => Err(err),
             Err(_) => {
@@ -186,6 +195,13 @@ impl std::fmt::Display for GameTree {
                 Ok(())
             }
         }
+    }
+}
+
+impl GameTree {
+    /// The tree as movetext whose first move is played from `start`.
+    pub fn from_position(&self, start: Option<Chess>) -> FromPosition<'_> {
+        FromPosition(self, start)
     }
 }
 
@@ -287,9 +303,15 @@ impl Visitor for Importer {
                 let fen = Fen::from_ascii(value.as_bytes());
                 if let Ok(fen) = fen {
                     self.game.fen = Some(value.decode_utf8_lossy().into_owned());
-                    if let Ok(setup) =
-                        Chess::from_setup(fen.into_setup(), shakmaty::CastlingMode::Standard)
+                    // Standard castling first; a Chess960 start (rooks off the a/h
+                    // files, a king off e) only reads in Chess960 mode.
+                    let setup = fen.into_setup();
+                    let read = |mode| {
+                        Chess::from_setup(setup.clone(), mode)
                             .or_else(PositionError::ignore_too_much_material)
+                    };
+                    if let Ok(setup) = read(shakmaty::CastlingMode::Standard)
+                        .or_else(|_| read(shakmaty::CastlingMode::Chess960))
                     {
                         self.game.position = setup;
                     } else {

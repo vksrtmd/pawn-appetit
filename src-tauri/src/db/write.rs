@@ -9,7 +9,7 @@
 use diesel::{connection::SimpleConnection, prelude::*};
 
 use super::{
-    core,
+    core, game_index,
     models::{NewGame, UpdateGame},
     schema::{games, players},
 };
@@ -45,15 +45,18 @@ pub fn apply<T>(
 }
 
 /// The derived data a change owes. Later work adds its step here:
-/// - per-file cache invalidation (#150): runs for every change;
-/// - recomputing the position-index row of each edited game (#149): in the
-///   `GamesEdited` arm.
+/// - per-file cache invalidation (#150): runs for every change.
 fn settle(conn: &mut SqliteConnection, change: Change<'_>) -> Result<()> {
     match change {
         // A skipped duplicate can leave an orphan; sweeping every row of a
         // large import for it costs more than it is worth, so only count.
         Change::GamesInserted => {}
-        Change::GamesEdited(_ids) => sweep_orphans(conn)?,
+        Change::GamesEdited(ids) => {
+            for &id in ids {
+                game_index::reindex_game(conn, id)?;
+            }
+            sweep_orphans(conn)?
+        }
         Change::GamesDeleted | Change::PlayersMerged => sweep_orphans(conn)?,
     }
     core::refresh_info_counts(conn)
@@ -377,6 +380,255 @@ mod tests {
             Err(Error::NotDistinctPlayers)
         });
         assert!(err.is_err());
+        assert_eq!(real(&mut conn)[0], 1);
+    }
+
+    const START_FEN: &str = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+    const KPK_FEN: &str = "4k3/8/8/8/8/8/4P3/4K3 w - - 0 1";
+
+    fn update_with(fen: &str, moves: &str) -> UpdateGame {
+        UpdateGame {
+            fen: fen.into(),
+            moves: moves.into(),
+            ..update_for("Alice", "Bob")
+        }
+    }
+
+    fn stored_fen(conn: &mut SqliteConnection, id: i32) -> Option<String> {
+        games::table
+            .filter(games::id.eq(id))
+            .select(games::fen)
+            .first(conn)
+            .unwrap()
+    }
+
+    fn stored_start(conn: &mut SqliteConnection, id: i32) -> (Option<String>, Option<String>) {
+        games::table
+            .filter(games::id.eq(id))
+            .select((games::date, games::time))
+            .first(conn)
+            .unwrap()
+    }
+
+    const ENDED_GAME: &str = r#"[Event "e"]
+[Date "2026.09.09"]
+[UTCTime "11:05:14"]
+[EndDate "2026.09.10"]
+[EndTime "01:02:03"]
+[White "Alice"]
+[Black "Bob"]
+[Result "0-1"]
+
+1. e4 e5 0-1
+"#;
+
+    fn import_source_game(conn: &mut SqliteConnection, pgn: &str) {
+        apply(conn, Change::GamesInserted, |conn| {
+            let mut reader = BufferedReader::new_cursor(pgn);
+            let mut importer = Importer::new(None);
+            let game = reader.read_game(&mut importer).unwrap().flatten().unwrap();
+            insert_to_db(conn, &game)
+        })
+        .unwrap();
+    }
+
+    /// The update the board sends back for a stored game it loaded unchanged.
+    fn resave(conn: &mut SqliteConnection, id: i32) -> UpdateGame {
+        let game = core::get_game(conn, id).unwrap();
+        UpdateGame {
+            fen: game.fen,
+            event: game.event,
+            site: game.site,
+            date: game.date,
+            time: game.time,
+            round: game.round,
+            white: game.white,
+            white_elo: game.white_elo,
+            black: game.black,
+            black_elo: game.black_elo,
+            result: game.result,
+            time_control: game.time_control,
+            eco: game.eco,
+            ply_count: None,
+            moves: game.moves,
+        }
+    }
+
+    #[test]
+    fn a_game_from_a_fen_keeps_its_moves_after_a_save() {
+        let db = TempDb::new("fen-moves");
+        let mut conn = db.open();
+        let id = seed_game(&mut conn, "Alice", "Bob", "Open");
+        diesel::update(games::table)
+            .set((
+                games::white_material.eq(0),
+                games::black_material.eq(0),
+                games::pawn_home.eq(0),
+            ))
+            .execute(&mut conn)
+            .unwrap();
+        update_game(&mut conn, id, &update_with(KPK_FEN, "1. e4 Kd7 2. e5 *")).unwrap();
+        let game = core::get_game(&mut conn, id).unwrap();
+        assert_eq!(game.fen, KPK_FEN);
+        assert_eq!(game.ply_count, Some(3));
+        let blob: Vec<u8> = games::table
+            .filter(games::id.eq(id))
+            .select(games::moves)
+            .first(&mut conn)
+            .unwrap();
+        assert_eq!(blob.len(), 3);
+        assert!(
+            game.moves.contains("e4") && game.moves.contains("Kd7") && game.moves.contains("e5"),
+            "{}",
+            game.moves
+        );
+    }
+
+    #[test]
+    fn a_game_at_the_standard_start_keeps_fen_null_after_a_save() {
+        let db = TempDb::new("fen-null");
+        let mut conn = db.open();
+        let id = seed_game(&mut conn, "Alice", "Bob", "Open");
+        update_game(&mut conn, id, &update_with(START_FEN, "1. e4 e5 *")).unwrap();
+        assert_eq!(stored_fen(&mut conn, id), None);
+        update_game(&mut conn, id, &update_with(KPK_FEN, "1. e4 Kd7 *")).unwrap();
+        assert_eq!(stored_fen(&mut conn, id).as_deref(), Some(KPK_FEN));
+    }
+
+    #[test]
+    fn saving_a_game_with_an_end_time_leaves_its_start_date_and_time() {
+        let db = TempDb::new("end-time");
+        let mut conn = db.open();
+        import_source_game(&mut conn, ENDED_GAME);
+        let id: i32 = games::table.select(games::id).first(&mut conn).unwrap();
+        let update = resave(&mut conn, id);
+        update_game(&mut conn, id, &update).unwrap();
+        assert_eq!(
+            stored_start(&mut conn, id),
+            (Some("2026.09.09".into()), Some("11:05:14".into()))
+        );
+        // The same source game is still recognised as stored.
+        import_source_game(&mut conn, ENDED_GAME);
+        assert_eq!(real(&mut conn)[0], 1);
+    }
+
+    #[test]
+    fn editing_the_date_of_a_saved_game_replaces_its_start_and_end() {
+        let db = TempDb::new("edit-date");
+        let mut conn = db.open();
+        import_source_game(&mut conn, ENDED_GAME);
+        let id: i32 = games::table.select(games::id).first(&mut conn).unwrap();
+        let mut update = resave(&mut conn, id);
+        update.date = Some("2026.10.01".into());
+        update_game(&mut conn, id, &update).unwrap();
+        assert_eq!(
+            stored_start(&mut conn, id),
+            (Some("2026.10.01".into()), Some("01:02:03".into()))
+        );
+        let game = core::get_game(&mut conn, id).unwrap();
+        assert_eq!(game.date.as_deref(), Some("2026.10.01"));
+    }
+
+    #[test]
+    fn position_search_finds_a_game_by_a_position_only_its_new_line_reaches() {
+        use crate::db::{game_index, schema::game_index as gi};
+        use shakmaty::Board;
+        let db = TempDb::new("reindex");
+        let mut conn = db.open();
+        let id = seed_game(&mut conn, "Alice", "Bob", "Open");
+        game_index::build_index(&mut conn, |_, _| {}).unwrap();
+        let found = |conn: &mut SqliteConnection| -> Vec<i32> {
+            let board = Board::from_ascii_board_fen(b"8/8/8/1B6/8/8/8/8").unwrap();
+            let up_to = game_index::indexed_up_to(conn);
+            let predicate = game_index::IndexFilter::new(&board, up_to)
+                .to_sql()
+                .unwrap();
+            games::table
+                .left_join(gi::table)
+                .select(games::id)
+                .filter(diesel::dsl::sql::<diesel::sql_types::Bool>(&predicate))
+                .load(conn)
+                .unwrap()
+        };
+        assert!(found(&mut conn).is_empty());
+        update_game(
+            &mut conn,
+            id,
+            &update_with(START_FEN, "1. e4 e5 2. Nf3 Nc6 3. Bb5 *"),
+        )
+        .unwrap();
+        assert_eq!(found(&mut conn), [id]);
+    }
+
+    #[test]
+    fn a_failing_update_game_changes_nothing() {
+        let db = TempDb::new("update-rollback");
+        let mut conn = db.open();
+        let id = seed_game(&mut conn, "Alice", "Bob", "Open");
+        let before = real(&mut conn);
+        conn.batch_execute("DROP TABLE Info").unwrap();
+        let err = update_game(&mut conn, id, &update_for("Carol", "Dave"));
+        assert!(err.is_err());
+        assert_eq!(real(&mut conn), before);
+        let (white, _, _) = names(&mut conn);
+        assert_eq!(white, ["Unknown", "Alice", "Bob"]);
+    }
+
+    #[test]
+    fn a_failing_merge_players_changes_nothing() {
+        let db = TempDb::new("merge-rollback");
+        let mut conn = db.open();
+        seed_game(&mut conn, "Alice", "Bob", "Open");
+        seed_game(&mut conn, "Carol", "Dave", "Cup");
+        let alice = create_player(&mut conn, "Alice").unwrap().id;
+        let carol = create_player(&mut conn, "Carol").unwrap().id;
+        let before = real(&mut conn);
+        conn.batch_execute("DROP TABLE Info").unwrap();
+        assert!(merge_players(&mut conn, alice, carol).is_err());
+        assert_eq!(real(&mut conn), before);
+        let alices: i64 = games::table
+            .filter(games::white_id.eq(alice))
+            .count()
+            .get_result(&mut conn)
+            .unwrap();
+        assert_eq!(alices, 1);
+    }
+
+    const C960_FEN: &str = "3k4/8/8/8/8/8/8/1R1K2R1 w GB - 0 1";
+
+    #[test]
+    fn a_chess960_game_keeps_its_castling_move_after_a_save() {
+        let db = TempDb::new("c960");
+        let mut conn = db.open();
+        let id = seed_game(&mut conn, "Alice", "Bob", "Open");
+        diesel::update(games::table)
+            .set((
+                games::white_material.eq(0),
+                games::black_material.eq(0),
+                games::pawn_home.eq(0),
+            ))
+            .execute(&mut conn)
+            .unwrap();
+        update_game(&mut conn, id, &update_with(C960_FEN, "1. O-O Kc7 *")).unwrap();
+        let game = core::get_game(&mut conn, id).unwrap();
+        assert_eq!(game.ply_count, Some(2));
+        assert!(
+            game.moves.contains("O-O") && game.moves.contains("Kc7"),
+            "{}",
+            game.moves
+        );
+    }
+
+    #[test]
+    fn importing_a_chess960_game_keeps_its_moves() {
+        let db = TempDb::new("c960-import");
+        let mut conn = db.open();
+        import_source_game(
+            &mut conn,
+            &format!(
+                "[Variant \"Chess960\"]\n[FEN \"{C960_FEN}\"]\n[White \"a\"]\n[Black \"b\"]\n\n1. O-O Kc7 *\n"
+            ),
+        );
         assert_eq!(real(&mut conn)[0], 1);
     }
 }

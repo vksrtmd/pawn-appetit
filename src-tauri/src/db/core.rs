@@ -115,6 +115,8 @@ pub fn normalize_game(
         .transpose()?
         .unwrap_or_default();
 
+    let start = Chess::from_setup(fen.clone().into(), CastlingMode::Chess960)?;
+
     Ok(NormalizedGame {
         id: game.id,
         event: event.name.unwrap_or_default(),
@@ -138,11 +140,9 @@ pub fn normalize_game(
         match_fen: None,
         match_next_move: None,
         fen: fen.to_string(),
-        moves: GameTree::from_bytes(
-            &game.moves,
-            Some(Chess::from_setup(fen.into(), CastlingMode::Chess960)?),
-        )?
-        .to_string(),
+        moves: GameTree::from_bytes(&game.moves, Some(start.clone()))?
+            .from_position(Some(start))
+            .to_string(),
     })
 }
 
@@ -168,27 +168,54 @@ pub fn get_game(conn: &mut SqliteConnection, id: i32) -> Result<NormalizedGame> 
     normalize_game(game, white, black, event, site)
 }
 
+/// Saves an edited game. Moves are read from the start position `data.fen`
+/// names, so a game that starts from a FEN keeps its moves; `FEN` stays NULL at
+/// the standard start, as the importer stores it. `data.date` and `data.time`
+/// are the date and time the game is shown with (the end ones when it has
+/// them): unchanged, they leave the stored start `Date`/`UTCTime` alone, and
+/// edited, they become the game's date and time with the end ones cleared.
 pub(super) fn update_game(conn: &mut SqliteConnection, id: i32, data: &UpdateGame) -> Result<()> {
-    let mut reader = BufferedReader::new_cursor(&data.moves);
-    let mut importer = Importer::new(None);
+    let start_fen = Fen::from_ascii(data.fen.as_bytes())?;
+    let mut pgn = String::new();
+    if start_fen != Fen::default() {
+        pgn.push_str(&format!("[FEN \"{}\"]\n\n", start_fen));
+    }
+    pgn.push_str(&data.moves);
 
-    let tree: GameTree = reader
+    let mut reader = BufferedReader::new_cursor(&pgn);
+    let mut importer = Importer::new(None);
+    let game = reader
         .read_game(&mut importer)?
         .flatten()
-        .ok_or(crate::error::Error::NoMovesFound)?
-        .tree;
+        .ok_or(crate::error::Error::NoMovesFound)?;
+    let ply_count = game.tree.count_main_line_moves() as i32;
 
-    let mut moves: Vec<u8> = Vec::new();
-    tree.encode(&mut moves, None);
-    let ply_count = tree.count_main_line_moves() as i32;
+    let (stored_date, stored_time, end_date, end_time): (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = games::table
+        .filter(games::id.eq(id))
+        .select((games::date, games::time, games::end_date, games::end_time))
+        .first(conn)?;
+    let shown_date = end_date.clone().or_else(|| stored_date.clone());
+    let shown_time = end_time.clone().or_else(|| stored_time.clone());
+    let (date, time, end_date, end_time) = if data.date == shown_date && data.time == shown_time {
+        (stored_date, stored_time, end_date, end_time)
+    } else {
+        (data.date.clone(), data.time.clone(), None, None)
+    };
 
     diesel::update(games::dsl::games)
         .filter(games::id.eq(id))
         .set((
-            games::fen.eq(&data.fen),
+            games::fen.eq(&game.fen),
             games::event_id.eq(create_event(conn, &data.event)?.id),
-            games::date.eq(&data.date),
-            games::time.eq(&data.time),
+            games::date.eq(date),
+            games::time.eq(time),
+            games::end_date.eq(end_date),
+            games::end_time.eq(end_time),
             games::round.eq(&data.round),
             games::site_id.eq(create_site(conn, &data.site)?.id),
             games::white_id.eq(create_player(conn, &data.white)?.id),
@@ -199,7 +226,7 @@ pub(super) fn update_game(conn: &mut SqliteConnection, id: i32, data: &UpdateGam
             games::time_control.eq(&data.time_control),
             games::eco.eq(&data.eco),
             games::ply_count.eq(ply_count),
-            games::moves.eq(&moves),
+            games::moves.eq(&game.moves),
         ))
         .execute(conn)?;
 
