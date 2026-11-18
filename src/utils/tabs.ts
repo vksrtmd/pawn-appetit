@@ -1,47 +1,12 @@
-import { z } from "zod";
 import { commands } from "@/bindings";
-import { fileMetadataSchema } from "@/features/files/utils/file";
-import { serializeStorageValue } from "./tabStateStorage";
+import { dispose, open } from "@/state/tabSession";
 import { unwrap } from "@/utils/unwrap";
 import { parsePGN } from "./chess";
 import { notifyPgnParseError } from "./pgnParseError";
 import { defaultTree, type GameHeaders, type TreeState } from "./treeReducer";
 
-const dbGameMetadataSchema = z.object({
-    type: z.literal("db"),
-    db: z.string(),
-    id: z.number(),
-});
-export type DbGameMetadata = z.infer<typeof dbGameMetadataSchema>;
-
-const entitySourceMetadataSchema = z.union([fileMetadataSchema, dbGameMetadataSchema]);
-
-export type EntitySourceMetadata = z.infer<typeof entitySourceMetadataSchema>;
-
-export const tabSchema = z.object({
-    name: z.string(),
-    value: z.string(),
-    type: z.enum(["new", "play", "analysis", "puzzles"]),
-    gameNumber: z.number().nullish(),
-    source: entitySourceMetadataSchema.nullish(),
-    meta: z
-        .object({
-            timeControl: z.object({
-                seconds: z.number(),
-                increment: z.number(),
-            }),
-        })
-        .optional(),
-});
-
-export type Tab = z.infer<typeof tabSchema>;
-
-export function genID() {
-    function S4() {
-        return (((1 + Math.random()) * 0x10000) | 0).toString(16).substring(1);
-    }
-    return S4() + S4();
-}
+export * from "./tabSchema";
+import { genID, type Tab, type EntitySourceMetadata } from "./tabSchema";
 
 export async function createTab({
     tab,
@@ -53,6 +18,7 @@ export async function createTab({
     gameNumber,
     position,
     fen,
+    tree: openedTree,
 }: {
     tab: Omit<Tab, "value">;
     setTabs: React.Dispatch<React.SetStateAction<Tab[]>>;
@@ -64,10 +30,14 @@ export async function createTab({
     position?: number[];
     /** Start the new tab from this position, with no move history. */
     fen?: string;
+    /** Start the new tab from this parsed tree. */
+    tree?: TreeState;
 }) {
     const id = genID();
 
-    if (pgn !== undefined) {
+    if (openedTree) {
+        open(id, openedTree);
+    } else if (pgn !== undefined) {
         // For variants files, parse as normal PGN (with variations) but display in variants view
         // Don't use isVariantsMode for parsing - that's only for special PGNs where all sequences are variations
         const tree = await parsePGN(pgn, headers?.fen, false).catch(rethrowNotified);
@@ -111,10 +81,9 @@ export async function createTab({
                 tree.position = position;
             }
         }
-        sessionStorage.setItem(id, serializeStorageValue({ version: 0, state: tree }));
+        open(id, tree);
     } else if (fen) {
-        const tree = defaultTree(fen);
-        sessionStorage.setItem(id, serializeStorageValue({ version: 0, state: tree }));
+        open(id, defaultTree(fen));
     }
 
     setTabs((prev) => {
@@ -122,6 +91,8 @@ export async function createTab({
             prev.length === 0 ||
             (prev.length === 1 && prev[0].type === "new" && tab.type !== "new")
         ) {
+            // Disposing twice (a re-run updater) is harmless
+            if (prev.length === 1) void dispose(prev[0].value);
             return [
                 {
                     ...tab,
@@ -168,7 +139,7 @@ export async function reloadTab(tab: Tab): Promise<TreeState | undefined> {
     }
 
     if (tree != null) {
-        sessionStorage.setItem(tab.value, serializeStorageValue({ version: 0, state: tree }));
+        open(tab.value, tree);
         return tree;
     }
 }

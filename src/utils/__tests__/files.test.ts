@@ -8,7 +8,6 @@ import {
 } from "../files";
 import { PgnParseError } from "../pgnParseError";
 import { getRecentFiles } from "../recentFiles";
-import { deserializeStorageValue } from "../tabStateStorage";
 
 const mocks = vi.hoisted(() => ({
     countPgnGames: vi.fn<() => Promise<{ status: "ok"; data: number }>>(),
@@ -104,10 +103,11 @@ describe("openFile", () => {
             }),
         );
         expect(mocks.parsePGN).toHaveBeenCalledWith('[Event "First"]\n\n1. e4 e5 *\n\n');
-        expect(deserializeStorageValue(sessionStorage.getItem("tab-1") ?? "")).toEqual({
-            version: 0,
-            state: { headers: { event: "First" } },
-        });
+        // The tree goes into createTab, which stores it before the tab is added
+        expect(mocks.createTab).toHaveBeenCalledWith(
+            expect.objectContaining({ tree: { headers: { event: "First" } } }),
+        );
+        expect(sessionStorage.length).toBe(0);
     });
 
     test("records a recent PGN after a successful open", async () => {

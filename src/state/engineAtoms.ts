@@ -5,6 +5,7 @@ import equal from "fast-deep-equal";
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
 import { atomFamily } from "jotai-family";
+import { tabAtomFamily } from "./tabAtoms";
 import type { BestMoves, GoMode } from "@/bindings";
 import { positionFromFen, swapMove } from "@/utils/chessops";
 import { type Engine, type EngineSettings, engineSchema } from "@/utils/engines";
@@ -26,18 +27,18 @@ export const reportTypeAtom = atom<"CP" | "WDL">("CP");
 export const scoreTypeFamily = atomFamily((_engine: string) => atom<"cp" | "wdl">("cp"));
 
 // Per-engine-tab move/progress atoms
-export const engineMovesFamily = atomFamily(
+export const engineMovesFamily = tabAtomFamily(
     (_: { tab: string; engine: string }) => atom<Map<string, BestMoves[]>>(new Map()),
-    (a, b) => a.tab === b.tab && a.engine === b.engine,
+    { tabOf: (p) => p.tab, areEqual: (a, b) => a.tab === b.tab && a.engine === b.engine },
 );
 
-export const engineProgressFamily = atomFamily(
+export const engineProgressFamily = tabAtomFamily(
     (_: { tab: string; engine: string }) => atom<number>(0),
-    (a, b) => a.tab === b.tab && a.engine === b.engine,
+    { tabOf: (p) => p.tab, areEqual: (a, b) => a.tab === b.tab && a.engine === b.engine },
 );
 
 // Per-engine-tab settings (enabled state, go mode, uci options)
-export const tabEngineSettingsFamily = atomFamily(
+export const tabEngineSettingsFamily = tabAtomFamily(
     ({
         defaultSettings,
         defaultGo,
@@ -59,7 +60,7 @@ export const tabEngineSettingsFamily = atomFamily(
             synced: true,
         });
     },
-    (a, b) => a.tab === b.tab && a.engineName === b.engineName,
+    { tabOf: (p) => p.tab, areEqual: (a, b) => a.tab === b.tab && a.engineName === b.engineName },
 );
 
 // Aggregate enable/disable atoms

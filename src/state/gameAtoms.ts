@@ -5,6 +5,7 @@
 import { atom } from "jotai";
 import { atomWithStorage, createJSONStorage, unwrap } from "jotai/utils";
 import { atomFamily } from "jotai-family";
+import { tabAtomFamily } from "./tabAtoms";
 import type { SyncStorage } from "jotai/vanilla/utils/atomWithStorage";
 import type { ReviewLog } from "ts-fsrs";
 import { z } from "zod";
@@ -124,10 +125,10 @@ export const deckAtomFamily = atomFamily(
 // ---------------------------------------------------------------------------
 
 export type GameState = "settingUp" | "playing" | "gameOver";
-const gameStateFamily = atomFamily((_tab: string) => atom<GameState>("settingUp"));
+const gameStateFamily = tabAtomFamily((_tab: string) => atom<GameState>("settingUp"));
 export const currentGameStateAtom = tabValue(gameStateFamily);
 
-const playersFamily = atomFamily((_tab: string) =>
+const playersFamily = tabAtomFamily((_tab: string) =>
     atom<{
         white: OpponentSettings;
         black: OpponentSettings;
@@ -135,5 +136,5 @@ const playersFamily = atomFamily((_tab: string) =>
 );
 export const currentPlayersAtom = tabValue(playersFamily);
 
-const currentPuzzleFamily = atomFamily((_tab: string) => atom(0));
+const currentPuzzleFamily = tabAtomFamily((_tab: string) => atom(0));
 export const currentPuzzleAtom = tabValue(currentPuzzleFamily);

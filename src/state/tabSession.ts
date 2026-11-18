@@ -9,6 +9,12 @@
  * or a file the user picks in a save-as dialog (no file, or a temp import file). On success the
  * tab's store is marked saved. A failed write rejects and leaves the tab dirty. A cancelled
  * dialog resolves "cancelled" without writing.
+ *
+ * The module also owns everything stored under a tab id: `open` writes a tab's first tree before
+ * the tab is added, `duplicate` copies the tab with its tree, source and side keys, `dispose`
+ * removes the tree, side keys, missing-moves entry and per-tab atoms and kills the tab's engines,
+ * and the `close*` functions dispose each tab they remove. Nothing outside this module touches a
+ * tab's session-storage keys.
  */
 import { save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { getDefaultStore } from "jotai";
@@ -24,8 +30,13 @@ import {
 import { formatDateToPGN } from "@/utils/format";
 import type { Tab } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
+import { deserializeStorageValue, compressedSessionStorage } from "@/utils/tabStateStorage";
+import { genID } from "@/utils/tabSchema";
+import type { TreeState } from "@/utils/treeReducer";
+import { missingMovesAtom } from "./gameAtoms";
 import { createTreeStore, type TreeStore } from "./store/tree";
-import { tabsAtom } from "./uiAtoms";
+import { disposeTabAtoms } from "./tabAtoms";
+import { activeTabAtom, tabsAtom } from "./uiAtoms";
 
 const stores = new Map<string, TreeStore>();
 
@@ -102,4 +113,124 @@ export async function save(tabId: string, { dir }: { dir: string }): Promise<Sav
     }
     store.getState().save();
     return "saved";
+}
+
+// ---------------------------------------------------------------------------
+// Everything stored under a tab id
+// ---------------------------------------------------------------------------
+
+/** The key of the zustand `persist` envelope the tree store writes (its default version). */
+const TREE_VERSION = 0;
+
+const SIDE_KEYS = ["localGameId", "chessComGameUrl", "lichessGameId"] as const;
+/** Ids a tab keeps next to its tree, for saving the analyzed game back to where it came from. */
+export type SideKey = (typeof SIDE_KEYS)[number];
+
+export function getSideKey(tabId: string, key: SideKey): string | null {
+    return sessionStorage.getItem(`${tabId}_${key}`);
+}
+
+export function setSideKey(tabId: string, key: SideKey, value: string): void {
+    sessionStorage.setItem(`${tabId}_${key}`, value);
+}
+
+/** The tab's stored tree, or null when it has none or it is unreadable. */
+export function readTree(tabId: string): TreeState | null {
+    const raw = compressedSessionStorage.getItem(tabId);
+    if (typeof raw !== "string") return null;
+    return deserializeStorageValue<{ state?: TreeState }>(raw)?.state ?? null;
+}
+
+/**
+ * Stores `tree` as tab `tabId`'s tree, so the board's first mount (or the next one) loads it. Call
+ * it before the tab is added to the tab list.
+ */
+export function open(tabId: string, tree: TreeState): void {
+    compressedSessionStorage.setItem(tabId, JSON.stringify({ version: TREE_VERSION, state: tree }));
+}
+
+/** Adds a copy of tab `tabId` with its tree, source and side keys, and makes it the active tab. */
+export function duplicate(tabId: string): string | null {
+    const jotai = getDefaultStore();
+    const tab = jotai.get(tabsAtom).find((t) => t.value === tabId);
+    if (!tab) return null;
+    const id = genID();
+    try {
+        const tree = compressedSessionStorage.getItem(tabId);
+        if (typeof tree === "string") compressedSessionStorage.setItem(id, tree);
+        for (const key of SIDE_KEYS) {
+            const value = getSideKey(tabId, key);
+            if (value !== null) setSideKey(id, key, value);
+        }
+    } catch (error) {
+        console.error(`Failed to duplicate tab state from ${tabId} to ${id}`, error);
+    }
+    jotai.set(tabsAtom, (prev) => [
+        ...prev,
+        {
+            name: tab.name,
+            value: id,
+            type: tab.type,
+            source: tab.source,
+            gameNumber: tab.gameNumber,
+        },
+    ]);
+    jotai.set(activeTabAtom, id);
+    return id;
+}
+
+/** Removes everything stored for tab `tabId` and kills its engines. Safe to call twice. */
+export async function dispose(tabId: string): Promise<void> {
+    compressedSessionStorage.removeItem(tabId);
+    for (const key of SIDE_KEYS) sessionStorage.removeItem(`${tabId}_${key}`);
+    getDefaultStore().set(missingMovesAtom, (prev) => {
+        if (!(tabId in prev)) return prev;
+        const { [tabId]: _removed, ...rest } = prev;
+        return rest;
+    });
+    disposeTabAtoms(tabId);
+    try {
+        unwrap(await commands.killEngines(tabId));
+    } catch (error) {
+        console.error(`Failed to kill engines for tab: ${tabId}`, error);
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Closing tabs: each removes tabs from the list and disposes them
+// ---------------------------------------------------------------------------
+
+function removeTabs(keep: (tab: Tab, index: number) => boolean, active?: string | null): void {
+    const jotai = getDefaultStore();
+    const tabs = jotai.get(tabsAtom);
+    const kept = tabs.filter(keep);
+    jotai.set(tabsAtom, kept);
+    if (active !== undefined) jotai.set(activeTabAtom, active);
+    for (const tab of tabs) if (!kept.includes(tab)) void dispose(tab.value);
+}
+
+/** Closes the active tab (Ctrl/Cmd+W) and activates its neighbour. */
+export function closeActiveTab(): void {
+    const jotai = getDefaultStore();
+    const tabs = jotai.get(tabsAtom);
+    const index = tabs.findIndex((t) => t.value === jotai.get(activeTabAtom));
+    if (index === -1) return;
+    const next = tabs.filter((_, i) => i !== index);
+    removeTabs((_, i) => i !== index, next[Math.min(index, next.length - 1)]?.value ?? null);
+}
+
+export function closeOtherTabs(tabId: string): void {
+    removeTabs((t) => t.value === tabId, tabId);
+}
+
+export function closeTabsToRight(tabId: string): void {
+    const index = getDefaultStore()
+        .get(tabsAtom)
+        .findIndex((t) => t.value === tabId);
+    if (index === -1) return;
+    removeTabs((_, i) => i <= index, tabId);
+}
+
+export function closeAllTabs(): void {
+    removeTabs(() => false, null);
 }

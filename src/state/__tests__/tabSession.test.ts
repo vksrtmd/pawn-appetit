@@ -2,6 +2,7 @@ import { getDefaultStore } from "jotai";
 import { beforeEach, expect, test, vi } from "vitest";
 
 const {
+    killEngines,
     writeGame,
     updateGame,
     countPgnGames,
@@ -9,6 +10,7 @@ const {
     save: saveDialog,
     createFile,
 } = vi.hoisted(() => ({
+    killEngines: vi.fn<(...a: unknown[]) => unknown>(),
     writeGame: vi.fn<(...a: unknown[]) => unknown>(),
     updateGame: vi.fn<(...a: unknown[]) => unknown>(),
     countPgnGames: vi.fn<(...a: unknown[]) => unknown>(),
@@ -18,7 +20,7 @@ const {
 }));
 
 vi.mock("@/bindings", () => ({
-    commands: { writeGame, updateGame, countPgnGames, readGames },
+    commands: { writeGame, updateGame, countPgnGames, readGames, killEngines },
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ save: saveDialog }));
 vi.mock("@tauri-apps/plugin-log", () => ({ error: vi.fn<() => void>() }));
@@ -39,7 +41,23 @@ import { tabsAtom } from "@/state/uiAtoms";
 import { createTreeStore } from "@/state/store/tree";
 import { defaultTree } from "@/utils/treeReducer";
 import type { Tab } from "@/utils/tabs";
-import { registerTabStore, save } from "../tabSession";
+import { missingMovesAtom } from "../gameAtoms";
+import { engineMovesFamily } from "../engineAtoms";
+import { activeTabAtom } from "../uiAtoms";
+import {
+    closeActiveTab,
+    closeAllTabs,
+    closeOtherTabs,
+    closeTabsToRight,
+    dispose,
+    duplicate,
+    getSideKey,
+    open,
+    readTree,
+    registerTabStore,
+    save,
+    setSideKey,
+} from "../tabSession";
 
 const ok = { status: "ok", data: null };
 const fileSource = (path: string) => ({
@@ -68,6 +86,8 @@ function addTab(tab: Tab, moves: string[] = []) {
 beforeEach(() => {
     vi.clearAllMocks();
     jotai.set(tabsAtom, []);
+    sessionStorage.clear();
+    killEngines.mockResolvedValue(ok);
     writeGame.mockResolvedValue(ok);
     updateGame.mockResolvedValue(ok);
 });
@@ -158,4 +178,124 @@ test("a write error after save-as rejects and keeps the tab's old source", async
 
     await expect(save("t", { dir: "/d" })).rejects.toThrow("disk full");
     expect(tabOf("t").source).toBeUndefined();
+});
+
+// ---------------------------------------------------------------------------
+// dispose and the close paths
+// ---------------------------------------------------------------------------
+
+/** Gives tab `id` everything the module stores for a tab. */
+function fillTab(id: string) {
+    open(id, defaultTree());
+    setSideKey(id, "localGameId", "g1");
+    setSideKey(id, "chessComGameUrl", "https://chess.com/g");
+    setSideKey(id, "lichessGameId", "li1");
+    jotai.set(missingMovesAtom, (prev) => ({ ...prev, [id]: [] }));
+    jotai.set(engineMovesFamily({ tab: id, engine: "sf" }), new Map());
+}
+
+function expectDisposed(id: string) {
+    expect(Object.keys(sessionStorage).filter((k) => k === id || k.startsWith(`${id}_`))).toEqual(
+        [],
+    );
+    expect(Object.keys(jotai.get(missingMovesAtom))).not.toContain(id);
+    expect([...engineMovesFamily.getParams()].filter((p) => p.tab === id)).toEqual([]);
+    expect(killEngines).toHaveBeenCalledWith(id);
+}
+
+async function settle() {
+    await new Promise((r) => setTimeout(r, 0));
+}
+
+test("dispose removes the tree, side keys, missing-moves entry and per-tab atoms and kills engines", async () => {
+    fillTab("a");
+    fillTab("b");
+
+    await dispose("a");
+
+    expectDisposed("a");
+    expect(readTree("b")).not.toBeNull();
+    expect(getSideKey("b", "lichessGameId")).toBe("li1");
+});
+
+test("Ctrl/Cmd+W closes the active tab and disposes it", async () => {
+    fillTab("a");
+    fillTab("b");
+    jotai.set(tabsAtom, [mkTab("a"), mkTab("b")]);
+    jotai.set(activeTabAtom, "a");
+
+    closeActiveTab();
+    await settle();
+
+    expect(jotai.get(tabsAtom).map((t) => t.value)).toEqual(["b"]);
+    expect(jotai.get(activeTabAtom)).toBe("b");
+    expectDisposed("a");
+    expect(killEngines).not.toHaveBeenCalledWith("b");
+});
+
+test("close others disposes every other tab", async () => {
+    for (const id of ["a", "b", "c"]) fillTab(id);
+    jotai.set(tabsAtom, [mkTab("a"), mkTab("b"), mkTab("c")]);
+
+    closeOtherTabs("b");
+    await settle();
+
+    expect(jotai.get(tabsAtom).map((t) => t.value)).toEqual(["b"]);
+    expectDisposed("a");
+    expectDisposed("c");
+    expect(readTree("b")).not.toBeNull();
+});
+
+test("close to the right disposes the tabs to the right", async () => {
+    for (const id of ["a", "b", "c"]) fillTab(id);
+    jotai.set(tabsAtom, [mkTab("a"), mkTab("b"), mkTab("c")]);
+
+    closeTabsToRight("a");
+    await settle();
+
+    expect(jotai.get(tabsAtom).map((t) => t.value)).toEqual(["a"]);
+    expectDisposed("b");
+    expectDisposed("c");
+    expect(readTree("a")).not.toBeNull();
+});
+
+test("close all disposes every tab", async () => {
+    for (const id of ["a", "b"]) fillTab(id);
+    jotai.set(tabsAtom, [mkTab("a"), mkTab("b")]);
+
+    closeAllTabs();
+    await settle();
+
+    expect(jotai.get(tabsAtom)).toEqual([]);
+    expectDisposed("a");
+    expectDisposed("b");
+});
+
+test("a duplicated tab keeps the source and side keys and saves to the same file", async () => {
+    const source = fileSource("/d/orig.pgn");
+    jotai.set(tabsAtom, [mkTab("orig", source)]);
+    open("orig", defaultTree());
+    setSideKey("orig", "localGameId", "g1");
+
+    const id = duplicate("orig")!;
+
+    expect(tabOf(id).source).toEqual(source);
+    expect(getSideKey(id, "localGameId")).toBe("g1");
+    expect(jotai.get(activeTabAtom)).toBe(id);
+    getTabStoreDirty(id);
+    await save(id, { dir: "/d" });
+    expect(writeGame.mock.calls[0][0]).toBe("/d/orig.pgn");
+});
+
+function getTabStoreDirty(id: string) {
+    const store = createTreeStore(id);
+    registerTabStore(id, store);
+    store.setState({ dirty: true });
+}
+
+test("a stored tree reads back as the opened tree", () => {
+    const tree = defaultTree();
+    tree.headers.event = "Opened";
+    open("t", tree);
+    expect(readTree("t")?.headers.event).toBe("Opened");
 });

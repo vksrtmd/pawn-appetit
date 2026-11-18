@@ -6,49 +6,11 @@ import { useLoaderData } from "@tanstack/react-router";
 import { useAtom, useAtomValue } from "jotai";
 import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { commands } from "@/bindings";
 import { MAX_TABS } from "@/features/boards/constants";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
-import { save } from "@/state/tabSession";
-import { deserializeStorageValue } from "@/utils/tabStateStorage";
-import { createTab, genID } from "@/utils/tabs";
-import { unwrap } from "@/utils/unwrap";
-
-function isValidTabState(value: unknown): value is { version: number; state: { dirty?: boolean } } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "version" in value &&
-    typeof value.version === "number" &&
-    "state" in value &&
-    typeof value.state === "object" &&
-    value.state !== null
-  );
-}
-
-function getTabState(tabId: string): { version: number; state: { dirty?: boolean } } | null {
-  try {
-    const rawState = sessionStorage.getItem(tabId);
-    if (!rawState) {
-      return null;
-    }
-
-    const parsedState = deserializeStorageValue<{ version: number; state: { dirty?: boolean } }>(
-      rawState,
-    );
-
-    if (isValidTabState(parsedState)) {
-      return parsedState;
-    }
-
-    console.warn(`Invalid tab state structure for tab: ${tabId}`);
-    return null;
-  } catch (error) {
-    console.error(`Failed to retrieve tab state for tab: ${tabId}`, error);
-    return null;
-  }
-}
+import { dispose, duplicate, readTree, save } from "@/state/tabSession";
+import { createTab } from "@/utils/tabs";
 
 export function useTabManagement() {
   const { t } = useTranslation();
@@ -70,8 +32,6 @@ export function useTabManagement() {
   const closeTab = useCallback(
     async (value: string | null, forced?: boolean) => {
       if (value !== null) {
-        const tabState = getTabState(value);
-
         let hasSource = false;
         setTabs((prevTabs) => {
           const closedTab = prevTabs.find((tab) => tab.value === value);
@@ -79,7 +39,7 @@ export function useTabManagement() {
           return prevTabs;
         });
 
-        if (tabState?.state?.dirty && hasSource && !forced) {
+        if (readTree(value)?.dirty && hasSource && !forced) {
           modals.openConfirmModal({
             title: t("common.unsavedChanges.title"),
             withCloseButton: false,
@@ -126,11 +86,7 @@ export function useTabManagement() {
           return newTabs;
         });
 
-        try {
-          unwrap(await commands.killEngines(value));
-        } catch (error) {
-          console.error(`Failed to kill engines for tab: ${value}`, error);
-        }
+        await dispose(value);
       }
     },
     [setTabs, setActiveTab, documentDir, t],
@@ -185,37 +141,9 @@ export function useTabManagement() {
     [setTabs],
   );
 
-  const duplicateTab = useCallback(
-    (value: string) => {
-      const id = genID();
-      setTabs((prevTabs) => {
-        const tab = prevTabs.find((tab) => tab.value === value);
-
-        try {
-          const existingState = sessionStorage.getItem(value);
-          if (existingState) {
-            sessionStorage.setItem(id, existingState);
-          }
-        } catch (error) {
-          console.error(`Failed to duplicate tab state from ${value} to ${id}`, error);
-        }
-
-        if (tab) {
-          setActiveTab(id);
-          return [
-            ...prevTabs,
-            {
-              name: tab.name,
-              value: id,
-              type: tab.type,
-            },
-          ];
-        }
-        return prevTabs;
-      });
-    },
-    [setTabs, setActiveTab],
-  );
+  const duplicateTab = useCallback((value: string) => {
+    duplicate(value);
+  }, []);
 
   const keyMap = useAtomValue(keyMapAtom);
   useHotkeys([
