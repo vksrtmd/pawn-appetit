@@ -77,12 +77,7 @@ import { createFile } from "@/utils/files";
 import { formatDateToPGN } from "@/utils/format";
 import { type GameRecord, saveGameRecord } from "@/utils/gameRecords";
 import { createTab } from "@/utils/tabs";
-import {
-  type GameHeaders,
-  type TreeNode,
-  type TreeState,
-  treeIteratorMainLine,
-} from "@/utils/treeReducer";
+import { type GameHeaders, type TreeNode, treeIteratorMainLine } from "@/utils/treeReducer";
 import {
   buildEngineGameHeaders,
   copyTimeControl,
