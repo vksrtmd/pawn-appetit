@@ -4,15 +4,15 @@ import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { useLoaderData } from "@tanstack/react-router";
 import { useAtom, useAtomValue } from "jotai";
-import { useCallback, useContext, useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { commands } from "@/bindings";
-import { TreeStateContext } from "@/components/TreeStateContext";
 import { MAX_TABS } from "@/features/boards/constants";
-import { activeTabAtom, currentTabAtom, tabsAtom } from "@/state/atoms";
+import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
+import { save } from "@/state/tabSession";
 import { deserializeStorageValue } from "@/utils/tabStateStorage";
-import { createTab, genID, saveToFile } from "@/utils/tabs";
+import { createTab, genID } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
 
 function isValidTabState(value: unknown): value is { version: number; state: { dirty?: boolean } } {
@@ -54,10 +54,8 @@ export function useTabManagement() {
   const { t } = useTranslation();
   const [tabs, setTabs] = useAtom(tabsAtom);
   const [activeTab, setActiveTab] = useAtom(activeTabAtom);
-  const [currentTab, setCurrentTab] = useAtom(currentTabAtom);
-  const { documentDir } = useLoaderData({ from: "/boards" });
 
-  const store = useContext(TreeStateContext);
+  const { documentDir } = useLoaderData({ from: "/boards" });
 
   useEffect(() => {
     if (tabs.length === 0) {
@@ -81,7 +79,7 @@ export function useTabManagement() {
           return prevTabs;
         });
 
-        if (tabState?.state?.dirty && hasSource && !forced && store) {
+        if (tabState?.state?.dirty && hasSource && !forced) {
           modals.openConfirmModal({
             title: t("common.unsavedChanges.title"),
             withCloseButton: false,
@@ -92,12 +90,7 @@ export function useTabManagement() {
             },
             onConfirm: async () => {
               try {
-                await saveToFile({
-                  dir: documentDir,
-                  setCurrentTab,
-                  tab: currentTab,
-                  store,
-                });
+                if ((await save(value, { dir: documentDir })) === "cancelled") return;
               } catch {
                 // The failed write was already reported; keep the tab open so the edits survive.
                 return;
@@ -140,7 +133,7 @@ export function useTabManagement() {
         }
       }
     },
-    [setTabs, setActiveTab, documentDir, currentTab, setCurrentTab, store, t],
+    [setTabs, setActiveTab, documentDir, t],
   );
 
   const selectTab = useCallback(
