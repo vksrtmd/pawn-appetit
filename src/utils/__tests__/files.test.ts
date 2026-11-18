@@ -23,7 +23,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@mantine/notifications", () => ({ notifications: { show: mocks.notify } }));
-vi.mock("@/i18n", () => ({ default: { t: (key: string) => key } }));
+vi.mock("i18next", () => ({ default: { t: (key: string) => key } }));
 
 vi.mock("@/bindings", () => ({
     commands: {

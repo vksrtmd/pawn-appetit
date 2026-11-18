@@ -1,5 +1,5 @@
 import { notifications } from "@mantine/notifications";
-import i18n from "@/i18n";
+import i18n from "i18next";
 
 /** A PGN move the parser can't read: the game is refused, not cut short there. */
 export class PgnParseError extends Error {
