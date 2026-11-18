@@ -51,7 +51,7 @@ describe("played_games.json", () => {
 
     test("a corrupt file is moved aside and not overwritten by the save", async () => {
         fs.files.set("/data/played_games.json", "{not json");
-        await expect(saveGameRecord(record("a"))).rejects.toThrow();
+        await expect(saveGameRecord(record("a"))).rejects.toThrow(/./);
         expect(fs.files.has("/data/played_games.json")).toBe(false);
         const aside = [...fs.files.entries()].filter(([k]) =>
             k.startsWith("/data/played_games.json."),
@@ -68,7 +68,7 @@ describe("played_games.json", () => {
 describe("analyzed_games.json", () => {
     test("a corrupt file is moved aside and not overwritten", async () => {
         fs.files.set("/data/analyzed_games.json", "oops");
-        await expect(saveAnalyzedGame("g", "pgn")).rejects.toThrow();
+        await expect(saveAnalyzedGame("g", "pgn")).rejects.toThrow(/./);
         expect(fs.files.has("/data/analyzed_games.json")).toBe(false);
         expect([...fs.files.values()]).toContain("oops");
     });

@@ -1445,5 +1445,12 @@
     "intermediate": "Intermediate",
     "advanced": "Advanced",
     "master": "Master"
+  },
+  "fileRename": {
+    "exists": "A file named \"{{name}}\" already exists."
+  },
+  "storageFull": {
+    "title": "Browser storage is full",
+    "message": "Open tabs can't be kept in session storage. Close some tabs or save your work to a file."
   }
 }
