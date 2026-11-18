@@ -977,6 +977,7 @@
       "mainLine": "Main Line",
       "showVariationsTooltip": "Show variations"
     },
+    "pgnParseIllegalMove": "Move {{san}} at ply {{ply}} is not legal, so the PGN was not applied.",
     "pgnInput": {
       "comments": "Comments",
       "glyphs": "Glyphs",

@@ -11,6 +11,7 @@ import {
   Textarea,
   Tooltip,
 } from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import { IconCheck, IconCopy } from "@tabler/icons-react";
 import deepEqual from "fast-deep-equal";
 import { useAtom } from "jotai";
@@ -19,7 +20,7 @@ import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { currentPgnOptionsAtom } from "@/state/atoms";
-import { getPGN, parsePGN } from "@/utils/chess";
+import { getPGN, PgnParseError, parsePGN } from "@/utils/chess";
 
 function PgnInput() {
   const store = useContext(TreeStateContext)!;
@@ -92,7 +93,17 @@ function PgnInput() {
   );
 
   async function updatePgn() {
-    const tree = await parsePGN(tmp);
+    let tree: Awaited<ReturnType<typeof parsePGN>>;
+    try {
+      tree = await parsePGN(tmp);
+    } catch (e) {
+      if (!(e instanceof PgnParseError)) throw e;
+      notifications.show({
+        color: "red",
+        message: t("features.pgnParseIllegalMove", { san: e.san, ply: e.ply }),
+      });
+      return;
+    }
     tree.dirty = true;
     tree.position = [];
 

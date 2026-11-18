@@ -518,6 +518,7 @@ test("should handle addAnalysis", () => {
                         wdl: null,
                     },
                     annotations: ["Best"], // e4 is the best move from the initial position, so it gets "Best" annotation
+                    reviewAnnotations: ["Best"],
                 },
             ],
         },

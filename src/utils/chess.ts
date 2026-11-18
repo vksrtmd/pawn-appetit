@@ -166,7 +166,7 @@ export function getMoveText(
         }
 
         if (opt.comments && tree.comment !== "") {
-            content += tree.comment;
+            content += escapeComment(tree.comment);
         }
         content += "} ";
 
@@ -250,17 +250,26 @@ function parseRatingTag(value: string | undefined): number | undefined {
     return rating > 0 && rating <= MAX_RATING ? rating : 0;
 }
 
+const escapeHeader = (value: string) => value.replace(/[\\"]/g, "\\$&");
+const unescapeHeader = (value: string) => value.replace(/\\([\\"])/g, "$1");
+// A PGN comment ends at the first `}` and has no escape, so the app writes `}` as \u007d
+// (and `\` as `\\`, to keep the two apart) and reads them back.
+const escapeComment = (text: string) => text.replace(/\\/g, "\\\\").replace(/}/g, "\\u007d");
+const unescapeComment = (text: string) =>
+    text.replace(/\\(\\|u007d)/g, (_, c) => (c === "u007d" ? "}" : "\\"));
+
 export function headersToPGN(game: GameHeaders): string {
-    let headers = `[Event "${game.event || "?"}"]
-[Site "${game.site || "?"}"]
-[Date "${game.date || "????.??.??"}"]
-[Round "${game.round || "?"}"]
-[White "${game.white || "?"}"]
-[Black "${game.black || "?"}"]
+    const e = escapeHeader;
+    let headers = `[Event "${e(game.event || "?")}"]
+[Site "${e(game.site || "?")}"]
+[Date "${e(game.date || "????.??.??")}"]
+[Round "${e(game.round || "?")}"]
+[White "${e(game.white || "?")}"]
+[Black "${e(game.black || "?")}"]
 [Result "${game.result}"]
 `;
     if (game.time) {
-        headers += `[UTCTime "${game.time}"]\n`;
+        headers += `[UTCTime "${e(game.time)}"]\n`;
     }
     if (game.white_elo != null) {
         headers += `[WhiteElo "${formatRatingTag(game.white_elo)}"]\n`;
@@ -275,23 +284,23 @@ export function headersToPGN(game: GameHeaders): string {
         headers += `[Orientation "${game.orientation}"]\n`;
     }
     if (game.time_control) {
-        headers += `[TimeControl "${game.time_control}"]\n`;
+        headers += `[TimeControl "${e(game.time_control)}"]\n`;
     }
     if (game.white_time_control) {
-        headers += `[WhiteTimeControl "${game.white_time_control}"]\n`;
+        headers += `[WhiteTimeControl "${e(game.white_time_control)}"]\n`;
     }
     if (game.black_time_control) {
-        headers += `[BlackTimeControl "${game.black_time_control}"]\n`;
+        headers += `[BlackTimeControl "${e(game.black_time_control)}"]\n`;
     }
     if (game.eco) {
-        headers += `[ECO "${game.eco}"]\n`;
+        headers += `[ECO "${e(game.eco)}"]\n`;
     }
     if (game.variant) {
-        headers += `[Variant "${game.variant}"]\n`;
+        headers += `[Variant "${e(game.variant)}"]\n`;
     }
     for (const [key, value] of Object.entries(game.other ?? {})) {
         if (key === "ECO" && game.eco) continue;
-        headers += `[${key} "${value}"]\n`;
+        headers += `[${key} "${e(value)}"]\n`;
     }
     return headers;
 }
@@ -548,6 +557,15 @@ export async function getOpening(root: TreeNode, position: number[]): Promise<st
     return res.data;
 }
 
+export class PgnParseError extends Error {
+    constructor(
+        readonly san: string,
+        readonly ply: number,
+    ) {
+        super(`pgnParse: illegal move "${san}" at ply ${ply}`);
+    }
+}
+
 function innerParsePGN(
     tokens: Token[],
     fen: string = INITIAL_FEN,
@@ -660,7 +678,7 @@ function innerParsePGN(
         const token = tokens[i];
 
         if (token.type === "Comment") {
-            const comment = parseComment(token.value);
+            const comment = parseComment(unescapeComment(token.value));
 
             if (comment.evaluation) {
                 if (isPawns(comment.evaluation)) {
@@ -767,8 +785,7 @@ function innerParsePGN(
             const sanValue = token.value;
             const move = parseSanOrUci(pos, sanValue);
             if (!move) {
-                i++;
-                continue;
+                throw new PgnParseError(sanValue, root.halfMoves + 1);
             }
             const san = makeSan(pos, move);
             pos.play(move);
@@ -834,7 +851,7 @@ export function getPgnHeaders(tokens: Token[]): GameHeaders {
     for (const token of tokens) {
         if (token.type === "Header") {
             const { tag, value } = token.value;
-            headersN.set(tag, value);
+            headersN.set(tag, unescapeHeader(value));
         } else if (token.type === "Outcome") {
             headersN.set("Result", token.value);
         }
