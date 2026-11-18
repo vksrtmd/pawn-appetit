@@ -162,7 +162,7 @@ fn a_search_follows_an_edited_game() {
         white_elo: None,
         black: "Bob".into(),
         black_elo: None,
-        result: Outcome::Unknown,
+        result: Outcome::WhiteWin,
         time_control: None,
         eco: None,
         ply_count: None,
