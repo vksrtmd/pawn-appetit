@@ -24,9 +24,9 @@ async findFidePlayer(player: string) : Promise<Result<FidePlayer | null, string>
 /**
  * Get best moves from the engine for a given position and options.
  */
-async getBestMoves(id: string, engine: string, tab: string, goMode: GoMode, options: EngineOptions) : Promise<Result<[number, BestMoves[]] | null, string>> {
+async getBestMoves(id: string, engine: string, tab: string, goMode: GoMode, options: EngineOptions, owner: string | null) : Promise<Result<[number, BestMoves[]] | null, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("get_best_moves", { id, engine, tab, goMode, options }) };
+    return { status: "ok", data: await TAURI_INVOKE("get_best_moves", { id, engine, tab, goMode, options, owner }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -35,9 +35,9 @@ async getBestMoves(id: string, engine: string, tab: string, goMode: GoMode, opti
 /**
  * Analyze a game using the engine, returning move-by-move analysis.
  */
-async analyzeGame(id: string, engine: string, goMode: GoMode, options: AnalysisOptions, uciOptions: EngineOption[]) : Promise<Result<MoveAnalysis[], string>> {
+async analyzeGame(id: string, engine: string, goMode: GoMode, options: AnalysisOptions, uciOptions: EngineOption[], owner: string | null) : Promise<Result<MoveAnalysis[], string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("analyze_game", { id, engine, goMode, options, uciOptions }) };
+    return { status: "ok", data: await TAURI_INVOKE("analyze_game", { id, engine, goMode, options, uciOptions, owner }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

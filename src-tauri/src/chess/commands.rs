@@ -5,8 +5,6 @@
 
 use std::path::PathBuf;
 
-use vampirc_uci::parse_one;
-
 use crate::error::Error;
 use crate::AppState;
 
@@ -14,26 +12,12 @@ use super::analysis::GameAnalysisService;
 use super::manager::EngineManager;
 use super::types::*;
 
-/// Kill all engine processes associated with a given tab.
+/// Kill every engine process of a tab, and any Game Review it is running. `tab` matches the
+/// tab id an engine was started for, or its owner, exactly.
 #[tauri::command]
 #[specta::specta]
 pub async fn kill_engines(tab: String, state: tauri::State<'_, AppState>) -> Result<(), Error> {
-    let keys: Vec<_> = state
-        .engine_processes
-        .iter()
-        .map(|x| x.key().clone())
-        .collect();
-    for key in keys.clone() {
-        if key.0.starts_with(&tab) {
-            {
-                let process = state.engine_processes.get_mut(&key).unwrap();
-                let mut process = process.lock().await;
-                process.kill().await?;
-            }
-            state.engine_processes.remove(&key);
-        }
-    }
-    Ok(())
+    state.engines.kill_owner(&tab).await
 }
 
 /// Kill a specific engine process by engine name and tab.
@@ -44,12 +28,7 @@ pub async fn kill_engine(
     tab: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), Error> {
-    let key = (tab, engine);
-    if let Some(process) = state.engine_processes.get(&key) {
-        let mut process = process.lock().await;
-        process.kill().await?;
-    }
-    Ok(())
+    state.engines.kill_key(&(tab, engine)).await
 }
 
 /// Stop a specific engine process (without killing it) by engine name and tab.
@@ -60,10 +39,8 @@ pub async fn stop_engine(
     tab: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<(), Error> {
-    let key = (tab, engine);
-    if let Some(process) = state.engine_processes.get(&key) {
-        let mut process = process.lock().await;
-        process.stop().await?;
+    if let Some(process) = state.engines.get(&(tab, engine)) {
+        process.lock().await.stop().await?;
     }
     Ok(())
 }
@@ -76,12 +53,9 @@ pub async fn get_engine_logs(
     tab: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<EngineLog>, Error> {
-    let key = (tab, engine);
-    if let Some(process) = state.engine_processes.get(&key) {
-        let process = process.lock().await;
-        Ok(process.logs.clone())
-    } else {
-        Ok(Vec::new())
+    match state.engines.get(&(tab, engine)) {
+        Some(process) => Ok(process.lock().await.logs.to_vec()),
+        None => Ok(Vec::new()),
     }
 }
 
@@ -94,11 +68,12 @@ pub async fn get_best_moves(
     tab: String,
     go_mode: GoMode,
     options: EngineOptions,
+    owner: Option<String>,
     app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<(f32, Vec<BestMoves>)>, Error> {
     EngineManager::new(state)
-        .get_best_moves(id, engine, tab, go_mode, options, app)
+        .get_best_moves(id, engine, tab, owner, go_mode, options, app)
         .await
 }
 
@@ -111,10 +86,13 @@ pub async fn analyze_game(
     go_mode: GoMode,
     options: AnalysisOptions,
     uci_options: Vec<EngineOption>,
+    owner: Option<String>,
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<Vec<MoveAnalysis>, Error> {
-    GameAnalysisService::analyze_game(id, engine, go_mode, options, uci_options, state, app).await
+    let owner = owner.unwrap_or_else(|| id.clone());
+    GameAnalysisService::analyze_game(id, engine, go_mode, options, uci_options, owner, state, app)
+        .await
 }
 
 /// Cancel the running game review `id`: its engine process is killed and `analyze_game` returns
@@ -122,49 +100,12 @@ pub async fn analyze_game(
 #[tauri::command]
 #[specta::specta]
 pub async fn cancel_analysis(id: String, state: tauri::State<'_, AppState>) -> Result<(), Error> {
-    state.analysis_cancel.cancel(&id);
-    Ok(())
+    state.engines.kill_owner(&id).await
 }
 
 /// Query a UCI engine for its configuration (name and options).
 #[tauri::command]
 #[specta::specta]
 pub async fn get_engine_config(path: PathBuf) -> Result<EngineConfig, Error> {
-    use tokio::io::AsyncBufReadExt;
-
-    let mut command = tokio::process::Command::new(&path);
-    command.current_dir(path.parent().unwrap());
-    command
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
-    #[cfg(target_os = "windows")]
-    command.creation_flags(super::process::CREATE_NO_WINDOW);
-    let mut child = command.spawn()?;
-    let mut stdin = child.stdin.take().ok_or(Error::NoStdin)?;
-    let stdout = child.stdout.take().ok_or(Error::NoStdout)?;
-    let mut stdout = tokio::io::BufReader::new(stdout).lines();
-
-    use tokio::io::AsyncWriteExt;
-    stdin.write_all(b"uci\n").await?;
-
-    let mut config = EngineConfig::default();
-    loop {
-        if let Some(line) = stdout.next_line().await? {
-            if let vampirc_uci::UciMessage::Id {
-                name: Some(name),
-                author: _,
-            } = parse_one(&line)
-            {
-                config.name = name;
-            }
-            if let vampirc_uci::UciMessage::Option(opt) = parse_one(&line) {
-                config.options.push(opt);
-            }
-            if let vampirc_uci::UciMessage::UciOk = parse_one(&line) {
-                break;
-            }
-        }
-    }
-    Ok(config)
+    super::uci::read_engine_config(path, super::uci::UCI_TIMEOUT).await
 }

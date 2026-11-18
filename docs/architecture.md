@@ -24,7 +24,11 @@ When adding or changing a command, update the Rust command signature, regenerate
 
 Engine binaries are installed and launched by Rust code. The backend starts UCI processes, sends setup and search commands, reads engine output, and emits analysis or play-session updates to the frontend. The frontend should treat engines as asynchronous services and render readiness, searching, stopped, and failure states explicitly.
 
-Each engine workflow should have one authoritative owner for the process, an idempotent shutdown path, and cleanup when the owning tab or job ends.
+Every UCI process lives in the `EngineRegistry` (`src-tauri/src/chess/registry.rs`), under the key `(tab id, engine path)`. Live analysis, engine games and Game Review all start engines through `get_or_start`: overlapping starts for one key share one process, and a process that is killed while it is still starting is dropped (and so killed) before it is handed out.
+
+Each engine has an owner, the tab whose closing must end it. `kill_engines(tab)` ends every engine whose owner or key tab equals `tab` exactly (tab "1" does not match "10"). The board starts engines under derived ids (`<tab>white`, `<tab>black`) and passes the tab as `owner` to `get_best_moves`; Game Review runs under the key `report_<tab>` and passes the tab as `owner` to `analyze_game`, so closing a tab cancels its review. Ending a slot goes through `EngineProcess::shutdown(grace)`: `quit`, wait up to `grace`, then force-kill; a review's engine is killed at once.
+
+Engine output is parsed in one place, `EngineProcess::handle_line`, for live analysis and Game Review. An engine's log keeps its most recent 2,000 lines. `get_engine_config` reads an engine's name and options through the same spawn and `uci` handshake, with a timeout.
 
 ## Database Modules
 

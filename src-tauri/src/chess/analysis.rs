@@ -4,72 +4,23 @@
 //! It integrates with the database for novelty detection and annotates sacrifices, supporting progress reporting for UI updates.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::time::Duration;
 
-use dashmap::DashMap;
 use shakmaty::{fen::Fen, uci::UciMove, CastlingMode, Chess, EnPassantMode, Position};
 use tokio::sync::watch;
-use vampirc_uci::parse_one;
 
 use crate::db::{is_position_in_db, GameQueryJs, PositionQueryJs};
 use crate::error::Error;
 use crate::AppState;
 
 use super::evaluation::naive_eval;
-use super::process::{parse_uci_attrs, EngineProcess};
+use super::process::{EngineProcess, LineEvent};
+use super::registry::{EngineLines, KILL_GRACE};
 use super::types::{AnalysisOptions, EngineOption, GoMode, MoveAnalysis, ReportProgress};
 use tauri_specta::Event;
 
 /// A position to analyze: its FEN, the moves leading to it, and whether the last move was a sacrifice.
 pub(crate) type GamePosition = (Fen, Vec<String>, bool);
-
-type EngineLines = tokio::io::Lines<tokio::io::BufReader<tokio::process::ChildStdout>>;
-
-/// Cancel switches of the running game reviews, keyed by analysis id.
-#[derive(Clone, Default)]
-pub struct AnalysisCancelRegistry {
-    senders: Arc<DashMap<String, watch::Sender<bool>>>,
-}
-
-/// Keeps a review registered for cancellation; unregisters it on drop.
-pub struct AnalysisCancelGuard {
-    id: String,
-    senders: Arc<DashMap<String, watch::Sender<bool>>>,
-    receiver: watch::Receiver<bool>,
-}
-
-impl AnalysisCancelGuard {
-    pub fn receiver(&self) -> watch::Receiver<bool> {
-        self.receiver.clone()
-    }
-}
-
-impl Drop for AnalysisCancelGuard {
-    fn drop(&mut self) {
-        self.senders.remove(&self.id);
-    }
-}
-
-impl AnalysisCancelRegistry {
-    /// Make the review `id` cancellable until the returned guard is dropped.
-    pub fn register(&self, id: &str) -> AnalysisCancelGuard {
-        let (sender, receiver) = watch::channel(false);
-        self.senders.insert(id.to_string(), sender);
-        AnalysisCancelGuard {
-            id: id.to_string(),
-            senders: self.senders.clone(),
-            receiver,
-        }
-    }
-
-    /// Ask the review `id` to stop. Returns whether such a review was running.
-    pub fn cancel(&self, id: &str) -> bool {
-        self.senders
-            .get(id)
-            .map(|sender| sender.send(true).is_ok())
-            .unwrap_or(false)
-    }
-}
 
 /// Build the list of positions to analyze (the start position plus one per move,
 /// stopping at game over), tracking sacrifices.
@@ -140,34 +91,12 @@ async fn analyze_positions(
         proc.go(go_mode).await?;
 
         let mut current_analysis = MoveAnalysis::default();
-        // Read engine output and parse best moves for this position.
+        // Read engine output and keep the last complete depth for this position.
         while let Ok(Some(line)) = reader.next_line().await {
-            match parse_one(&line) {
-                vampirc_uci::UciMessage::Info(attrs) => {
-                    if let Ok(best_moves) =
-                        parse_uci_attrs(attrs, &proc.options.fen.parse()?, moves)
-                    {
-                        let multipv = best_moves.multipv;
-                        let cur_depth = best_moves.depth;
-                        if multipv as usize == proc.best_moves.len() + 1 {
-                            proc.best_moves.push(best_moves);
-                            if multipv == proc.real_multipv {
-                                if proc.best_moves.iter().all(|x| x.depth == cur_depth)
-                                    && cur_depth >= proc.last_depth
-                                {
-                                    current_analysis.best = proc.best_moves.clone();
-                                    proc.last_depth = cur_depth;
-                                }
-                                assert_eq!(proc.best_moves.len(), proc.real_multipv as usize);
-                                proc.best_moves.clear();
-                            }
-                        }
-                    }
-                }
-                vampirc_uci::UciMessage::BestMove { .. } => {
-                    break;
-                }
-                _ => {}
+            match proc.handle_line(&line, || true) {
+                LineEvent::Depth { lines, .. } => current_analysis.best = lines,
+                LineEvent::BestMove { .. } => break,
+                LineEvent::Other => {}
             }
         }
         analysis.push(current_analysis);
@@ -175,7 +104,8 @@ async fn analyze_positions(
     Ok(analysis)
 }
 
-/// Run [`analyze_positions`] until it finishes or `cancel` turns true. On cancel the
+/// Run [`analyze_positions`] until it finishes or `closed` turns true (the registry ended the
+/// review's engine slot). On cancel the
 /// engine process is killed at once and `Error::AnalysisCancelled` is returned.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn analyze_until_cancelled(
@@ -185,18 +115,18 @@ pub(crate) async fn analyze_until_cancelled(
     positions: &[GamePosition],
     go_mode: &GoMode,
     uci_options: &[EngineOption],
-    mut cancel: watch::Receiver<bool>,
+    mut closed: watch::Receiver<bool>,
     on_progress: impl FnMut(f64) -> Result<(), Error>,
 ) -> Result<Vec<MoveAnalysis>, Error> {
     let finished = tokio::select! {
         result = analyze_positions(proc, reader, options, positions, go_mode, uci_options, on_progress) => Some(result),
-        _ = cancel.wait_for(|cancelled| *cancelled) => None,
+        _ = closed.wait_for(|closed| *closed) => None,
     };
     match finished {
         Some(result) => result,
         None => {
             // No "quit" handshake: a search in progress must end now.
-            proc.child.kill().await?;
+            proc.shutdown(Duration::ZERO).await?;
             Err(Error::AnalysisCancelled)
         }
     }
@@ -214,6 +144,7 @@ impl GameAnalysisService {
     /// * `go_mode` - Engine search mode (depth, time, etc).
     /// * `options` - Analysis options (FEN, moves, etc).
     /// * `uci_options` - Extra UCI engine options.
+    /// * `owner` - Tab whose closing cancels the review.
     /// * `state` - Application state for DB and engine process management.
     /// * `app` - Tauri app handle for event emission.
     ///
@@ -229,14 +160,20 @@ impl GameAnalysisService {
         go_mode: GoMode,
         options: AnalysisOptions,
         uci_options: Vec<EngineOption>,
+        owner: String,
         state: tauri::State<'_, AppState>,
         app: tauri::AppHandle,
     ) -> Result<Vec<MoveAnalysis>, Error> {
         // Validate the moves before spawning an engine.
         let mut fens = game_positions(&options)?;
-        let cancel = state.analysis_cancel.register(&id);
-
-        let (mut proc, mut reader) = EngineProcess::new(PathBuf::from(&engine)).await?;
+        let key = (id.clone(), engine.clone());
+        let started = state
+            .engines
+            .get_or_start(key.clone(), owner, PathBuf::from(&engine))
+            .await?;
+        let mut reader = started.reader.ok_or_else(|| {
+            Error::EngineInitFailed(format!("A review with id {id} is already running"))
+        })?;
 
         if options.reversed {
             fens.reverse();
@@ -244,25 +181,32 @@ impl GameAnalysisService {
 
         let mut novelty_found = false;
 
-        let mut analysis = analyze_until_cancelled(
-            &mut proc,
-            &mut reader,
-            &options,
-            &fens,
-            &go_mode,
-            &uci_options,
-            cancel.receiver(),
-            |progress| {
-                ReportProgress {
-                    progress,
-                    id: id.clone(),
-                    finished: false,
-                }
-                .emit(&app)?;
-                Ok(())
-            },
-        )
-        .await?;
+        let result = {
+            let mut proc = started.process.lock().await;
+            analyze_until_cancelled(
+                &mut proc,
+                &mut reader,
+                &options,
+                &fens,
+                &go_mode,
+                &uci_options,
+                started.slot.closed(),
+                |progress| {
+                    ReportProgress {
+                        progress,
+                        id: id.clone(),
+                        finished: false,
+                    }
+                    .emit(&app)?;
+                    Ok(())
+                },
+            )
+            .await
+        };
+        // The review is over, however it ended: end its engine.
+        state.engines.remove(&key, &started.slot);
+        started.process.lock().await.shutdown(KILL_GRACE).await.ok();
+        let mut analysis = result?;
 
         if options.reversed {
             analysis.reverse();
@@ -346,87 +290,58 @@ mod tests {
         assert_eq!(positions[2].1, vec!["e2e4", "e7e5"]);
     }
 
-    #[test]
-    fn cancelling_an_unknown_analysis_reports_nothing_to_cancel() {
-        let registry = AnalysisCancelRegistry::default();
-        assert!(!registry.cancel("report_tab1"));
-    }
-
-    #[test]
-    fn a_registered_analysis_sees_the_cancel_request() {
-        let registry = AnalysisCancelRegistry::default();
-        let guard = registry.register("report_tab1");
-        assert!(registry.cancel("report_tab1"));
-        assert!(*guard.receiver().borrow());
-    }
-
-    #[test]
-    fn dropping_the_guard_unregisters_the_analysis() {
-        let registry = AnalysisCancelRegistry::default();
-        drop(registry.register("report_tab1"));
-        assert!(!registry.cancel("report_tab1"));
-    }
-
     /// An engine that answers the handshake and then searches "forever",
     /// ignoring stdin, like an engine deep in a long search.
     #[cfg(unix)]
     fn busy_engine(dir: &std::path::Path) -> PathBuf {
-        use std::os::unix::fs::PermissionsExt;
-        let path = dir.join("busy-engine.sh");
-        std::fs::write(
-            &path,
-            "#!/bin/sh\n\
-             while read line; do\n\
-               case \"$line\" in\n\
-                 uci) echo uciok;;\n\
-                 isready) echo readyok;;\n\
-                 go*) sleep 30;;\n\
-               esac\n\
-             done\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        path
+        super::super::test_support::engine(dir, "busy-engine.sh", "0")
     }
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn cancel_ends_a_running_review_and_its_engine_within_a_second() {
+    async fn closing_the_tab_ends_a_running_review_and_its_engine_within_a_second() {
         let dir = tempfile::tempdir().unwrap();
-        let (mut proc, mut reader) = EngineProcess::new(busy_engine(dir.path())).await.unwrap();
-        let pid = proc.child.id().unwrap();
+        let registry = super::super::registry::EngineRegistry::default();
+        let key = ("report_tab1".to_string(), "busy".to_string());
+        let started = registry
+            .get_or_start(key, "tab1".to_string(), busy_engine(dir.path()))
+            .await
+            .unwrap();
+        let mut reader = started.reader.unwrap();
         let positions = game_positions(&options(&["e2e4"])).unwrap();
-        let registry = AnalysisCancelRegistry::default();
-        let guard = registry.register("report_tab1");
 
-        let canceller = {
+        let closer = {
             let registry = registry.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(Duration::from_millis(200)).await;
-                registry.cancel("report_tab1");
+                registry.kill_owner("tab1").await
             })
         };
 
-        let started = Instant::now();
-        let result = analyze_until_cancelled(
-            &mut proc,
-            &mut reader,
-            &options(&["e2e4"]),
-            &positions,
-            &super::super::types::GoMode::Depth(20),
-            &[],
-            guard.receiver(),
-            |_| Ok(()),
-        )
-        .await;
-        canceller.await.unwrap();
+        let started_at = Instant::now();
+        let result = {
+            let mut proc = started.process.lock().await;
+            analyze_until_cancelled(
+                &mut proc,
+                &mut reader,
+                &options(&["e2e4"]),
+                &positions,
+                &super::super::types::GoMode::Depth(20),
+                &[],
+                started.slot.closed(),
+                |_| Ok(()),
+            )
+            .await
+        };
+        closer.await.unwrap().unwrap();
 
         assert!(matches!(result, Err(Error::AnalysisCancelled)));
-        assert!(started.elapsed() < Duration::from_secs(1));
-        // The engine process is gone: signal 0 fails for a reaped pid.
+        assert!(started_at.elapsed() < Duration::from_secs(1));
+        let pid = super::super::test_support::pids(dir.path())[0];
         assert!(
-            proc.child.try_wait().unwrap().is_some(),
-            "pid {pid} still running"
+            super::super::test_support::eventually(2, || !super::super::test_support::alive(pid))
+                .await,
+            "review engine still alive"
         );
     }
 }

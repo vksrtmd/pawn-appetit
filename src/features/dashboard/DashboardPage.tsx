@@ -957,6 +957,7 @@ export default function DashboardPage() {
                   moves,
                 },
                 engineSettings,
+                null,
               );
 
               // Check again if cancelled after analysis

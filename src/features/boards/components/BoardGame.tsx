@@ -772,6 +772,7 @@ function BoardGame() {
               moves: moves,
               extraOptions: engineExtraOptions(player),
             },
+            activeTab,
           )
           .catch(() => {
             // Clear the ref on error so we can retry
