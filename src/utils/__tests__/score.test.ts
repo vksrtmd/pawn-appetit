@@ -277,3 +277,38 @@ describe.each(["white", "black"] as const)("grading an Error for %s", (color) =>
         });
     });
 });
+
+describe("faster-mate sacrifice", () => {
+    const line = (value: number, san: string, multipv: number): BestMoves => ({
+        depth: 1,
+        multipv,
+        nodes: 1,
+        score: { value: { type: "mate", value }, wdl: null },
+        nps: 1000,
+        sanMoves: [san],
+        uciMoves: ["a7a5"],
+    });
+    // Scores are from White's point of view: a mate for Black is negative.
+    const annotate = (color: Color, best: number, second: number) =>
+        getAnnotation(
+            null,
+            null,
+            { type: "cp", value: color === "white" ? 300 : -300 },
+            color,
+            [line(best, "Qxh2+", 1), line(second, "Qh4", 2)],
+            true,
+            "Qxh2+",
+        );
+
+    test("gets !! for White", () => {
+        expect(annotate("white", 2, 5)).toBe("!!");
+    });
+
+    test("gets !! for Black", () => {
+        expect(annotate("black", -2, -5)).toBe("!!");
+    });
+
+    test("gets no !! when the second mate is faster", () => {
+        expect(annotate("black", -5, -2)).not.toBe("!!");
+    });
+});

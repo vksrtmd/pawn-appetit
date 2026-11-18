@@ -309,8 +309,9 @@ export function getAnnotation(
 
             // Faster mate than second-best
             if (bestIsMate && secondIsMate) {
-                const bestMateMoves = bestScore.value;
-                const secondMateMoves = secondScore.value;
+                // Mate distances are signed by side (negative for a Black mate): compare sizes.
+                const bestMateMoves = Math.abs(bestScore.value);
+                const secondMateMoves = Math.abs(secondScore.value);
                 if (bestMateMoves < secondMateMoves) {
                     return "!!";
                 }

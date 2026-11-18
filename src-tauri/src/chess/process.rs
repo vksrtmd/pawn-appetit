@@ -12,7 +12,7 @@ use vampirc_uci::{uci::ScoreValue, UciInfoAttribute};
 
 use crate::error::Error;
 
-use super::session::EngineLifecycle;
+use super::session::{EngineLifecycle, EngineSessionState};
 use super::types::{BestMoves, EngineLog, EngineOptions, GoMode};
 use super::uci::{UciCommunicator, UCI_TIMEOUT};
 use shakmaty::{fen::Fen, san::SanPlus, uci::UciMove, CastlingMode, Chess, Color, Position};
@@ -48,8 +48,13 @@ pub enum LineEvent {
         progress: f64,
         lines: Vec<BestMoves>,
     },
-    /// The engine sent `bestmove`; `lines` are the last complete depth.
-    BestMove { lines: Vec<BestMoves> },
+    /// The engine ended the search with `bestmove`; `lines` are the last complete depth and
+    /// `bestmove` is the move it chose (`None` for `bestmove (none)`). A `bestmove` from a
+    /// search that was stopped is not this: it is `Other`.
+    BestMove {
+        lines: Vec<BestMoves>,
+        bestmove: Option<String>,
+    },
     /// Anything else (or a partial depth, or one held back by the rate limit).
     Other,
 }
@@ -65,7 +70,6 @@ pub struct EngineProcess {
     pub last_progress: f32,
     pub options: EngineOptions,
     pub go_mode: GoMode,
-    pub running: bool,
     pub real_multipv: u16,
     pub logs: LogBuffer,
     pub start: Instant,
@@ -119,7 +123,6 @@ impl EngineProcess {
                 options: EngineOptions::default(),
                 real_multipv: 0,
                 go_mode: GoMode::Infinite,
-                running: false,
                 start: Instant::now(),
             },
             comm.stdout_lines,
@@ -197,13 +200,18 @@ impl EngineProcess {
                     LineEvent::Other
                 }
             },
-            vampirc_uci::UciMessage::BestMove { .. } => {
+            vampirc_uci::UciMessage::BestMove { best_move, .. } if self.is_searching() => {
                 self.last_progress = 100.0;
-                self.running = false;
                 self.lifecycle.mark_ready();
                 LineEvent::BestMove {
                     lines: self.last_best_moves.clone(),
+                    bestmove: Some(best_move.to_string()).filter(|m| m != "0000"),
                 }
+            }
+            // The `isready` after `stop`: the stopped search is over, a new one may start.
+            vampirc_uci::UciMessage::ReadyOk if self.lifecycle.is_stopping() => {
+                self.lifecycle.mark_ready();
+                LineEvent::Other
             }
             _ => LineEvent::Other,
         };
@@ -239,6 +247,8 @@ impl EngineProcess {
                 GoMode::Nodes(nodes) => (cur_nodes as f64 / nodes as f64) * 100.0,
                 GoMode::PlayersTime(_) | GoMode::Infinite => 99.99,
             };
+            // Only the final `bestmove` reports 100.
+            let progress = progress.min(99.99);
             self.last_depth = cur_depth;
             self.last_best_moves = self.best_moves.clone();
             self.last_progress = progress as f32;
@@ -274,23 +284,28 @@ impl EngineProcess {
             return Err(e.into());
         }
         self.logs.push(EngineLog::Gui(msg));
-        self.running = true;
         self.start = Instant::now();
         Ok(())
     }
 
-    /// Stop the engine's current search.
+    /// Whether a search is in progress: the one source of truth for "searching".
+    pub fn is_searching(&self) -> bool {
+        self.lifecycle.state == EngineSessionState::Searching
+    }
+
+    /// Stop the engine's current search. The engine is `Stopping` until it answers the
+    /// `isready` sent after `stop` with `readyok` (see [`Self::handle_line`]); the `bestmove`
+    /// of the stopped search arrives before that and is ignored.
     pub async fn stop(&mut self) -> Result<(), Error> {
         if !self.lifecycle.begin_search_stop() {
             return Ok(());
         }
-        if let Err(e) = self.stdin.write_all(b"stop\n").await {
+        if let Err(e) = self.stdin.write_all(b"stop\nisready\n").await {
             self.lifecycle.mark_failed(e.to_string());
             return Err(e.into());
         }
         self.logs.push(EngineLog::Gui("stop\n".to_string()));
-        self.running = false;
-        self.lifecycle.mark_ready();
+        self.logs.push(EngineLog::Gui("isready\n".to_string()));
         Ok(())
     }
 
@@ -311,8 +326,6 @@ impl EngineProcess {
                 self.logs.push(EngineLog::Gui("quit\n".to_string()));
             }
         }
-
-        self.running = false;
 
         // Wait for process to exit gracefully (2 second timeout)
         let wait_result = tokio::time::timeout(grace, self.child.wait()).await;
@@ -553,7 +566,6 @@ mod tests {
             last_progress: 0.0,
             options: EngineOptions::default(),
             go_mode: GoMode::Depth(1),
-            running: true,
             real_multipv: 1,
             logs: LogBuffer::default(),
             start: Instant::now(),
@@ -570,7 +582,6 @@ mod tests {
         assert!(emitted.is_none(), "throttled: nothing emitted");
         assert_eq!(proc.last_best_moves.len(), 1);
         assert_eq!(proc.last_best_moves[0].uci_moves, vec!["e2e4"]);
-        assert_eq!(proc.last_progress, 100.0);
     }
 
     #[tokio::test]
@@ -580,7 +591,10 @@ mod tests {
 
         let (progress, lines) = proc.record_info(best, || true).unwrap();
 
-        assert_eq!(progress, 100.0);
+        assert_eq!(
+            progress, 99.99,
+            "the last depth of a depth search is not yet done"
+        );
         assert_eq!(lines.len(), 1);
     }
 
@@ -647,6 +661,7 @@ mod tests {
     async fn handle_line_turns_info_and_bestmove_into_events() {
         let mut proc = test_process();
         proc.options.fen = START.to_string();
+        proc.lifecycle.start_search();
 
         let depth = proc.handle_line("info depth 1 score cp 30 multipv 1 pv e2e4", || true);
         let LineEvent::Depth { lines, .. } = depth else {
@@ -655,11 +670,12 @@ mod tests {
         assert_eq!(lines[0].uci_moves, vec!["e2e4"]);
 
         let done = proc.handle_line("bestmove e2e4", || true);
-        let LineEvent::BestMove { lines } = done else {
+        let LineEvent::BestMove { lines, bestmove } = done else {
             panic!("expected bestmove");
         };
         assert_eq!(lines.len(), 1);
-        assert!(!proc.running);
+        assert_eq!(bestmove.as_deref(), Some("e2e4"));
+        assert!(!proc.is_searching());
         assert_eq!(proc.logs.to_vec().len(), 2);
     }
 }
