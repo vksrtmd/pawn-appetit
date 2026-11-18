@@ -76,7 +76,7 @@ export type AppCommand = {
   action: () => void;
 };
 
-export type CommandMenuAction = {
+type CommandMenuAction = {
   id?: string;
   label: string;
   shortcut?: string;

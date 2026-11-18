@@ -10,7 +10,7 @@ type TimeFields = {
     incrementUnit?: TimeType;
 };
 
-export type HumanOpponent = TimeFields & { type: "human"; name?: string };
+type HumanOpponent = TimeFields & { type: "human"; name?: string };
 
 export type EngineOpponent = TimeFields & {
     type: "engine";

@@ -102,20 +102,6 @@ export async function countGamesOnDate(date: Date = new Date()): Promise<number>
     }
 }
 
-export async function clearAllGames(): Promise<void> {
-    const dir = await appDataDir();
-    const file = await resolve(dir, FILENAME);
-    // Write an empty array to clear all games
-    await writeTextFile(file, JSON.stringify([]));
-    if (typeof window !== "undefined") {
-        try {
-            window.dispatchEvent(new Event("games:updated"));
-        } catch {
-            // ignore
-        }
-    }
-}
-
 export async function updateGameRecord(
     gameId: string,
     updates: Partial<GameRecord>,

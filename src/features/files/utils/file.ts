@@ -44,11 +44,6 @@ export const fileMetadataSchema = z.object({
 
 export type FileMetadata = z.infer<typeof fileMetadataSchema>;
 
-export type FileData = {
-    metadata: FileInfoMetadata;
-    games: string[];
-};
-
 async function readFileMetadata(path: string): Promise<FileMetadata | null> {
     if (!path.endsWith(".pgn")) {
         return null;
@@ -85,7 +80,7 @@ export type Directory = {
 
 const fileIndexCache = new Map<string, Promise<FileMetadata[]>>();
 
-export function flattenFiles(entries: (FileMetadata | Directory)[]): FileMetadata[] {
+function flattenFiles(entries: (FileMetadata | Directory)[]): FileMetadata[] {
     return entries.flatMap((entry) => {
         if (entry.type === "directory") return flattenFiles(entry.children);
         return [entry];

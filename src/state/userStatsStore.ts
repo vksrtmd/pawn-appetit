@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { practices } from "@/features/train/constants/practices";
 
-export interface UserStats {
+interface UserStats {
     practiceCompleted: number;
     totalPractice: number;
     totalPoints: number;

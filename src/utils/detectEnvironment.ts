@@ -223,32 +223,4 @@ export const env = {
     getInfo: (): EnvironmentInfo => getEnvironmentInfo(),
 };
 
-/**
- * React hook for environment detection (if using React)
- */
-export function useEnvironment(): EnvironmentInfo {
-    // For SSR compatibility, we'll return a default value initially
-    if (typeof window === "undefined") {
-        return {
-            environment: "web",
-            platform: "unknown",
-            isTauri: false,
-            isWeb: true,
-            isMobile: false,
-            isDesktop: false,
-            userAgent: "",
-            touchSupport: false,
-            screenSize: { width: 0, height: 0 },
-        };
-    }
-
-    return getEnvironmentInfo();
-}
-
 // Default export for convenience
-export default {
-    detect: detectEnvironment,
-    getInfo: getEnvironmentInfo,
-    env,
-    useEnvironment,
-};

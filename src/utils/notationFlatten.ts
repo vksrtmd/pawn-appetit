@@ -1,6 +1,6 @@
 import { getNodeAtPath, type TreeNode } from "./treeReducer";
 
-export type NotationLineRow = {
+type NotationLineRow = {
     type: "line";
     key: string;
     depth: number;
@@ -14,7 +14,7 @@ export type NotationLineRow = {
     paths: number[][];
 };
 
-export type NotationCommentRow = {
+type NotationCommentRow = {
     type: "comment";
     key: string;
     depth: number;
@@ -25,7 +25,7 @@ export type NotationCommentRow = {
 export type NotationRow = NotationLineRow | NotationCommentRow;
 
 // Table view: one mainline move pair (white | black). A missing side is null (rendered empty).
-export type NotationPairRow = {
+type NotationPairRow = {
     type: "pair";
     key: string;
     moveNumber: number;

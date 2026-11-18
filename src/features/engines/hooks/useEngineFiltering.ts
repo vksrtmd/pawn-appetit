@@ -2,7 +2,7 @@ import { useMemo } from "react";
 import type { SortState } from "@/components/GenericHeader";
 import type { Engine } from "@/utils/engines";
 
-export const createEngineSearchText = (engine: Engine): string => {
+const createEngineSearchText = (engine: Engine): string => {
     const parts = [
         engine.name,
         engine.type === "local" ? engine.path : engine.url,
@@ -11,12 +11,12 @@ export const createEngineSearchText = (engine: Engine): string => {
     return parts.join(" ").toLowerCase();
 };
 
-export const sortEnginesByName = (a: Engine, b: Engine, direction: "asc" | "desc"): number => {
+const sortEnginesByName = (a: Engine, b: Engine, direction: "asc" | "desc"): number => {
     const comparison = a.name.toLowerCase().localeCompare(b.name.toLowerCase());
     return direction === "asc" ? comparison : -comparison;
 };
 
-export const sortEnginesByElo = (a: Engine, b: Engine, direction: "asc" | "desc"): number => {
+const sortEnginesByElo = (a: Engine, b: Engine, direction: "asc" | "desc"): number => {
     const eloA = a.type === "local" ? (a.elo ?? -1) : -1;
     const eloB = b.type === "local" ? (b.elo ?? -1) : -1;
     const comparison = eloA - eloB;

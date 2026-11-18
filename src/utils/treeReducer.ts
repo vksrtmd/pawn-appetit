@@ -27,7 +27,7 @@ export interface TreeNode {
     clock?: number;
 }
 
-export interface ReportState {
+interface ReportState {
     progress: number;
     isCompleted: boolean;
     inProgress: boolean;
