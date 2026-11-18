@@ -9,7 +9,7 @@ use shakmaty::{fen::Fen, CastlingMode, Chess, FromSetup};
 
 use crate::{
     db::{
-        connection::{get_db_or_create, ConnectionOptions},
+        connection::get_db_or_create,
         models::{Event, Game, Player, Site},
         pgn::GameTree,
         schema::{events, games, players, sites},
@@ -155,7 +155,7 @@ pub async fn export_to_pgn(
     dest_file: PathBuf,
     state: tauri::State<'_, AppState>,
 ) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
 
     let file = OpenOptions::new()
         .create(true)
