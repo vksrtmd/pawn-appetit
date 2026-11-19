@@ -12,7 +12,7 @@ import { createFile, createTempImportFile, openFile } from "@/utils/files";
 import { getLichessGame } from "@/utils/lichess/api";
 import { parseMultiplePgnGames } from "@/utils/pgnUtils";
 import { open } from "@/state/tabSession";
-import type { Tab } from "@/utils/tabs";
+import type { Tab } from "@/utils/tabSchema";
 import { defaultTree, getGameName, type TreeState } from "@/utils/treeReducer";
 
 export type ImportSource = "PGN" | "Link" | "FEN";

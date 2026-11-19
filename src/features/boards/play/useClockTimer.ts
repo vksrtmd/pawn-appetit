@@ -32,7 +32,12 @@ export function useClockTimer(
     const charge = (side: Side, now: number, increment: number) => {
         const elapsed = lastRef.current === null ? 0 : now - lastRef.current;
         const set = side === "white" ? setWhiteTime : setBlackTime;
-        set((prev) => (prev === null ? prev : Math.max(0, prev - elapsed) + increment));
+        // A move that lands after the flag fell leaves 0: no increment for a flagged side
+        set((prev) => {
+            if (prev === null) return prev;
+            const left = prev - elapsed;
+            return left <= 0 ? 0 : left + increment;
+        });
     };
 
     // A move: the side that moved pays the time it took and gets its increment.

@@ -10,7 +10,8 @@ import { unwrap } from "@/utils/unwrap";
 import { parsePGN } from "./chess";
 import { notifyPgnParseError } from "./pgnParseError";
 import { recordRecentFile } from "./recentFiles";
-import { createTab, type Tab } from "./tabs";
+import type { Tab } from "./tabSchema";
+import { createTab } from "./tabs";
 import { getGameName } from "./treeReducer";
 
 export function usePlatform() {
@@ -83,7 +84,7 @@ export async function openFile(
         throw e;
     }
 
-    await createTab({
+    const id = await createTab({
         tab: {
             name: getGameName(firstGameTree?.headers) || "Multiple Games",
             type: "analysis",
@@ -94,7 +95,7 @@ export async function openFile(
         gameNumber: 0,
         tree: firstGameTree,
     });
-    return true;
+    return id !== null;
 }
 
 export async function openFileAndRemember(

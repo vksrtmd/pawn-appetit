@@ -38,7 +38,7 @@ export function getRecentFiles(): RecentFile[] {
     }
 }
 
-export function setRecentFiles(files: RecentFile[]): RecentFile[] {
+function setRecentFiles(files: RecentFile[]): RecentFile[] {
     const nextFiles = files.slice(0, MAX_RECENT_FILES);
     localStorage.setItem(RECENT_FILES_STORAGE_KEY, JSON.stringify(nextFiles));
     return nextFiles;

@@ -32,7 +32,7 @@ vi.mock("@mantine/modals", () => ({ modals: { openConfirmModal } }));
 vi.mock("@tanstack/react-router", () => ({ useLoaderData: () => ({ documentDir: "/docs" }) }));
 
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
-import type { Tab } from "@/utils/tabs";
+import type { Tab } from "@/utils/tabSchema";
 import { defaultTree } from "@/utils/treeReducer";
 import { open, setSideKey } from "@/state/tabSession";
 import { useTabManagement } from "../useTabManagement";

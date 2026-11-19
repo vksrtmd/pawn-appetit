@@ -164,13 +164,3 @@ export function useVersionCheck(options: UseVersionCheckOptions = {}): UseVersio
         isAutoCheckEnabled,
     };
 }
-
-export function useManualVersionCheck() {
-    const { checkVersion, isChecking, lastResult } = useVersionCheck({ autoCheck: false });
-
-    return {
-        checkVersion,
-        isChecking,
-        lastResult,
-    };
-}

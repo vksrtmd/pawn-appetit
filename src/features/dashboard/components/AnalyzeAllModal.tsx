@@ -2,7 +2,7 @@ import { Button, Group, Modal, Progress, Radio, Stack, Text } from "@mantine/cor
 import { useForm } from "@mantine/form";
 import { useEffect, useRef, useState } from "react";
 
-export type AnalysisSpeed = "express" | "swift" | "focused" | "advanced" | "deepdive";
+type AnalysisSpeed = "express" | "swift" | "focused" | "advanced" | "deepdive";
 
 export interface AnalyzeAllConfig {
   speed: AnalysisSpeed;

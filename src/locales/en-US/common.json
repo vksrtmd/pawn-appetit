@@ -954,7 +954,8 @@
         "delete": {
           "title": "Remove game",
           "desc": "Are you sure you want to remove this game?"
-        }
+        },
+        "unreadable": "Unreadable game"
       }
     },
     "gameTable": {
@@ -1447,7 +1448,9 @@
     "master": "Master"
   },
   "fileRename": {
-    "exists": "A file named \"{{name}}\" already exists."
+    "exists": "A file named \"{{name}}\" already exists.",
+    "failed": "The file could not be renamed to \"{{name}}\".",
+    "sidecarFailed": "The file was renamed to \"{{name}}\", but its type and tags could not be saved."
   },
   "storageFull": {
     "title": "Browser storage is full",

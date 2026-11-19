@@ -19,7 +19,7 @@ export type SuccessDatabaseInfo = Extract<DatabaseInfo, { type: "success" }>;
 
 export type Sides = "WhiteBlack" | "BlackWhite" | "Any";
 
-export type DownloadableDatabase = {
+type DownloadableDatabase = {
     title: string;
     game_count: number;
     player_count: number;
@@ -27,7 +27,7 @@ export type DownloadableDatabase = {
     downloadLink: string;
 };
 // TODO: These two types should follow the same format (camelCase vs snake_case)
-export type DownloadablePuzzleDatabase = {
+type DownloadablePuzzleDatabase = {
     title: string;
     description: string;
     puzzleCount: number;
@@ -82,20 +82,6 @@ const PUZZLE_DATABASES: DownloadablePuzzleDatabase[] = [
         downloadLink: `${import.meta.env.VITE_SERVER_URL}/Lichess Puzzles 2026.db3`,
     },
 ];
-
-export interface CompleteGame {
-    game: NormalizedGame;
-    currentMove: number[];
-}
-
-export type Speed =
-    | "UltraBullet"
-    | "Bullet"
-    | "Blitz"
-    | "Rapid"
-    | "Classical"
-    | "Correspondence"
-    | "Unknown";
 
 function normalizeRange(range?: [number, number] | null): [number, number] | undefined {
     if (!range || range[1] - range[0] === 3000) {

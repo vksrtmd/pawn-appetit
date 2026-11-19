@@ -35,8 +35,9 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
-import { open } from "@/state/tabSession";
-import type { Tab } from "@/utils/tabs";
+import { createTreeStore } from "@/state/store/tree";
+import { open, registerTabStore } from "@/state/tabSession";
+import type { Tab } from "@/utils/tabSchema";
 import { defaultTree } from "@/utils/treeReducer";
 import { useCloseActiveTab } from "../tabClose";
 
@@ -107,4 +108,17 @@ test("the menu path and the hotkey dispose a clean tab without a dialog", async 
   expect(tabIds()).toEqual(["a"]);
   expect(killEngines).toHaveBeenCalledWith("b");
   expect(sessionStorage.getItem("b")).toBeNull();
+});
+
+test("a dirty tab whose stored tree could not be written still asks before closing", async () => {
+  const store = createTreeStore();
+  store.setState({ ...defaultTree(), dirty: true });
+  registerTabStore("b", store);
+  expect(sessionStorage.getItem("b")).toBeNull();
+  const { result } = renderHook(() => useCloseActiveTab());
+
+  await result.current();
+
+  expect(openConfirmModal).toHaveBeenCalledTimes(1);
+  expect(tabIds()).toEqual(["a", "b"]);
 });

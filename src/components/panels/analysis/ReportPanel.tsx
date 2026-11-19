@@ -162,37 +162,28 @@ function ReportPanel() {
           }
 
           // Check if this tab is associated with a local game
-          const localGameId =
-            typeof window !== "undefined" ? getSideKey(activeTab, "localGameId") : null;
+          const localGameId = getSideKey(activeTab, "localGameId");
 
           if (localGameId) {
             // Update the GameRecord with the new PGN that includes evaluations
             await updateGameRecord(localGameId, { pgn: pgnWithEvals });
             // Trigger refresh of games list in dashboard
-            if (typeof window !== "undefined") {
-              window.dispatchEvent(new CustomEvent("games:updated"));
-            }
+            window.dispatchEvent(new CustomEvent("games:updated"));
           } else {
             // Check if this tab is associated with a Chess.com or Lichess game
-            const chessComGameUrl =
-              typeof window !== "undefined" ? getSideKey(activeTab, "chessComGameUrl") : null;
-            const lichessGameId =
-              typeof window !== "undefined" ? getSideKey(activeTab, "lichessGameId") : null;
+            const chessComGameUrl = getSideKey(activeTab, "chessComGameUrl");
+            const lichessGameId = getSideKey(activeTab, "lichessGameId");
 
             if (chessComGameUrl) {
               // Save analyzed PGN for Chess.com game
               await saveAnalyzedGame(chessComGameUrl, pgnWithEvals);
               // Trigger refresh of Chess.com games list in dashboard
-              if (typeof window !== "undefined") {
-                window.dispatchEvent(new CustomEvent("chesscom:games:updated"));
-              }
+              window.dispatchEvent(new CustomEvent("chesscom:games:updated"));
             } else if (lichessGameId) {
               // Save analyzed PGN for Lichess game
               await saveAnalyzedGame(lichessGameId, pgnWithEvals);
               // Trigger refresh of Lichess games list in dashboard
-              if (typeof window !== "undefined") {
-                window.dispatchEvent(new CustomEvent("lichess:games:updated"));
-              }
+              window.dispatchEvent(new CustomEvent("lichess:games:updated"));
             }
           }
         } catch (error) {

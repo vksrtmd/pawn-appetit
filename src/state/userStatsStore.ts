@@ -3,7 +3,7 @@ import { createJSONStorage, persist } from "zustand/middleware";
 import { dateKey } from "@/utils/puzzleStreak";
 import { practices } from "@/features/train/constants/practices";
 
-export interface UserStats {
+interface UserStats {
     practiceCompleted: number;
     totalPractice: number;
     totalPoints: number;

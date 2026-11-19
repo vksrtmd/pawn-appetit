@@ -1,14 +1,14 @@
 import type { JSX } from "react";
 import type { MosaicNode } from "react-mosaic-component";
 
-export const MOSAIC_PORTAL_IDS = {
+const MOSAIC_PORTAL_IDS = {
   BOARD: "board",
   ENGINE: "engine",
   MOVES: "moves",
   TRAINING: "training",
 } as const;
 
-export type WorkbenchPanel =
+type WorkbenchPanel =
   | "board"
   | "moves"
   | "engine"
@@ -31,7 +31,7 @@ export const MOSAIC_PANE_CONSTRAINTS = {
   DEFAULT_SPLIT_PERCENTAGE: 50,
 } as const;
 
-export const MOSAIC_RIGHT_COLUMN_SPLIT = 55;
+const MOSAIC_RIGHT_COLUMN_SPLIT = 55;
 
 export const MAX_TABS = 10;
 
