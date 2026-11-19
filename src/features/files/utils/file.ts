@@ -44,11 +44,6 @@ export const fileMetadataSchema = z.object({
 
 export type FileMetadata = z.infer<typeof fileMetadataSchema>;
 
-export type FileData = {
-    metadata: FileInfoMetadata;
-    games: string[];
-};
-
 /** The `.info` sidecar of a PGN path: only the trailing extension changes. */
 export function infoPathFor(pgnPath: string): string {
     return pgnPath.replace(/\.pgn$/, ".info");
@@ -96,7 +91,7 @@ export type Directory = {
 
 const fileIndexCache = new Map<string, Promise<FileMetadata[]>>();
 
-export function flattenFiles(entries: (FileMetadata | Directory)[]): FileMetadata[] {
+function flattenFiles(entries: (FileMetadata | Directory)[]): FileMetadata[] {
     return entries.flatMap((entry) => {
         if (entry.type === "directory") return flattenFiles(entry.children);
         return [entry];

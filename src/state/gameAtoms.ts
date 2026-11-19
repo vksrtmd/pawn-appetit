@@ -12,7 +12,6 @@ import { z } from "zod";
 import { commands } from "@/bindings";
 import type { OpponentSettings } from "@/features/boards/components/BoardGame";
 import { type Position, positionSchema } from "@/features/files/utils/opening";
-import type { SuccessDatabaseInfo } from "@/utils/db";
 import type { MissingMove } from "@/utils/repertoire";
 import { createZodStorage } from "./utils";
 import { tabValue } from "./uiAtoms";
@@ -44,11 +43,6 @@ export const forgetReferenceDbAtom = atom(null, (get, set, file: string) => {
 });
 
 export const selectedPuzzleDbAtom = atomWithStorage<string | null>("puzzle-db", null);
-export const selectedDatabaseAtom = atomWithStorage<SuccessDatabaseInfo | null>(
-    "database-view",
-    null,
-    createJSONStorage(() => sessionStorage),
-);
 
 // ---------------------------------------------------------------------------
 // Puzzle settings

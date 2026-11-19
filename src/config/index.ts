@@ -3,7 +3,7 @@ import type { VersionCheckConfig } from "../services/version-checker";
 
 export const IS_DEV = import.meta.env.DEV;
 
-export const VERSION_CHECK_CONFIG: VersionCheckConfig = {
+const VERSION_CHECK_CONFIG: VersionCheckConfig = {
     versionUrl: "https://api.github.com/repos/Pawn-Appetit/pawn-appetit/releases/latest",
     currentVersion: version,
     timeout: 15_000,
@@ -17,7 +17,7 @@ export const VERSION_CHECK_SETTINGS = {
     enabledByDefault: true,
 } as const;
 
-export function getCurrentVersion(): string {
+function getCurrentVersion(): string {
     return VERSION_CHECK_CONFIG.currentVersion;
 }
 

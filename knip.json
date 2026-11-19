@@ -1,7 +1,7 @@
 {
-  "$schema": "https://unpkg.com/knip@5/schema.json",
-  "tags": ["-lintignore"],
-  "entry": ["src/index.tsx", "src/routes/**/*.tsx"],
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": ["src/routes/**/*.tsx"],
   "project": ["src/**/*.{ts,tsx}"],
-  "ignore": ["src/bindings/generated.ts", "src/routeTree.gen.ts"]
+  "ignore": ["src/bindings/generated.ts"],
+  "ignoreDependencies": ["@commitlint/config-conventional"]
 }

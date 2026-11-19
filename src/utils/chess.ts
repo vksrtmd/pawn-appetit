@@ -29,23 +29,8 @@ import {
 } from "./treeReducer";
 import { unwrap } from "./unwrap";
 
-export interface BestMoves {
-    depth: number;
-    score: Score;
-    uciMoves: string[];
-    sanMoves: string[];
-    multipv: number;
-    nps: number;
-}
-
-export interface MoveAnalysis {
-    best: BestMoves[];
-    novelty: boolean;
-    is_sacrifice: boolean;
-}
-
 // copied from chessops
-export const makeClk = (seconds: number): string => {
+const makeClk = (seconds: number): string => {
     let s = Math.max(0, seconds);
     const hours = Math.floor(s / 3600);
     const minutes = Math.floor((s % 3600) / 60);
@@ -178,7 +163,7 @@ export function getMoveText(
     return moveText;
 }
 
-export function getLastMainlinePosition(root: TreeNode): number[] {
+function getLastMainlinePosition(root: TreeNode): number[] {
     const position = [];
     for (let node = root; node.children.length > 0; node = node.children[0]) {
         if (node.move) {

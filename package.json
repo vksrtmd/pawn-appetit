@@ -19,11 +19,10 @@
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",
     "fmt:rust:check": "cargo fmt --manifest-path src-tauri/Cargo.toml --check",
-    "update-readme": "tsx scripts/update-readme.ts",
     "update-missing-translations": "tsx scripts/update-missing-translations.ts",
     "update-version": "tsx scripts/update-version.ts",
     "knip": "knip",
-    "check": "pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm test && pnpm fmt:rust:check && pnpm lint:rust && pnpm test:rust"
+    "check": "pnpm fmt:check && pnpm lint && pnpm typecheck && pnpm knip && pnpm test && pnpm fmt:rust:check && pnpm lint:rust && pnpm test:rust"
   },
   "dependencies": {
     "@badrap/result": "^0.3.1",
@@ -102,7 +101,6 @@
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.12",
-    "@types/d3": "^7.4.3",
     "@types/d3-hierarchy": "^3.1.7",
     "@types/d3-selection": "^3.0.11",
     "@types/d3-shape": "^3.1.8",

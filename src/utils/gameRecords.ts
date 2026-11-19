@@ -89,11 +89,6 @@ export async function countGamesOnDate(date: Date = new Date()): Promise<number>
     }
 }
 
-export async function clearAllGames(): Promise<void> {
-    await updateHistoryFile<GameRecord[]>(FILENAME, [], () => []);
-    notifyGamesUpdated();
-}
-
 export async function updateGameRecord(
     gameId: string,
     updates: Partial<GameRecord>,

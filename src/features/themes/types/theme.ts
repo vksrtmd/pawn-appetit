@@ -1,26 +1,26 @@
 import { z } from "zod";
 
 // Theme Schema based on https://raw.githubusercontent.com/kahvilei/mantine-theme-generator/refs/heads/main/src/data/appTheme.json
-export const themeColorsSchema = z.record(z.string(), z.array(z.string()).length(10));
+const themeColorsSchema = z.record(z.string(), z.array(z.string()).length(10));
 
-export const themePrimaryShadeSchema = z.object({
+const themePrimaryShadeSchema = z.object({
     light: z.number().min(0).max(9),
     dark: z.number().min(0).max(9),
 });
 
-export const themeHeadingsSchema = z.object({
+const themeHeadingsSchema = z.object({
     fontFamily: z.string(),
     fontWeight: z.string(),
 });
 
-export const themeComponentStyleSchema = z.record(z.string(), z.any());
+const themeComponentStyleSchema = z.record(z.string(), z.any());
 
-export const themeComponentSchema = z.object({
+const themeComponentSchema = z.object({
     defaultProps: z.record(z.string(), z.any()).optional(),
     styles: themeComponentStyleSchema.optional(),
 });
 
-export const themeComponentsSchema = z.record(z.string(), themeComponentSchema);
+const themeComponentsSchema = z.record(z.string(), themeComponentSchema);
 
 export const themeSchema = z.object({
     id: z.string(),
@@ -60,21 +60,17 @@ export const themeSchema = z.object({
 
 export type Theme = z.infer<typeof themeSchema>;
 export type ThemeColors = z.infer<typeof themeColorsSchema>;
-export type ThemePrimaryShade = z.infer<typeof themePrimaryShadeSchema>;
-export type ThemeHeadings = z.infer<typeof themeHeadingsSchema>;
+
 export type ThemeComponents = z.infer<typeof themeComponentsSchema>;
 
 // Theme export/import format
-export const themeExportSchema = themeSchema.omit({
+const themeExportSchema = themeSchema.omit({
     id: true,
     isBuiltIn: true,
     createdAt: true,
     updatedAt: true,
 });
 export type ThemeExport = z.infer<typeof themeExportSchema>;
-
-// Color scheme is separate from themes
-export type ColorScheme = "light" | "dark" | "auto";
 
 // Theme management operations
 export interface ThemeOperations {

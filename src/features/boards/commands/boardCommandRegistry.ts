@@ -11,7 +11,7 @@ export type BoardCommandId =
     | "toggleEngine"
     | "stopEngine";
 
-export type BoardCommand = {
+type BoardCommand = {
     id: BoardCommandId;
     run: () => void;
     disabled?: boolean;

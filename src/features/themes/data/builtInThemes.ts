@@ -202,7 +202,7 @@ export const defaultTheme: Theme = {
     defaultRadius: "sm",
 };
 
-export const githubTheme: Theme = {
+const githubTheme: Theme = {
     id: "github",
     name: "GitHub",
     description: "GitHub inspired theme with familiar colors",
@@ -404,7 +404,7 @@ export const githubTheme: Theme = {
     defaultRadius: "md",
 };
 
-export const materialTheme: Theme = {
+const materialTheme: Theme = {
     id: "material",
     name: "Material Design",
     description: "Google Material Design inspired theme",
@@ -667,7 +667,7 @@ export const materialTheme: Theme = {
     },
 };
 
-export const catppuccinTheme: Theme = {
+const catppuccinTheme: Theme = {
     id: "catppuccin",
     name: "Catppuccin",
     description: "Catppuccin Mocha color palette theme",
@@ -869,7 +869,7 @@ export const catppuccinTheme: Theme = {
     defaultRadius: "md",
 };
 
-export const oledTheme: Theme = {
+const oledTheme: Theme = {
     id: "oled",
     name: "OLED",
     description: "Pure black theme optimized for OLED displays",
@@ -1071,7 +1071,7 @@ export const oledTheme: Theme = {
     defaultRadius: "sm",
 };
 
-export const oceanTheme: Theme = {
+const oceanTheme: Theme = {
     id: "ocean",
     name: "Ocean Depths",
     description: "Deep blues and aqua inspired by ocean depths",
@@ -1273,7 +1273,7 @@ export const oceanTheme: Theme = {
     defaultRadius: "sm",
 };
 
-export const retroGamingTheme: Theme = {
+const retroGamingTheme: Theme = {
     id: "retro-gaming",
     name: "Retro Gaming",
     description: "8-bit inspired colors reminiscent of classic video games",
@@ -1475,7 +1475,7 @@ export const retroGamingTheme: Theme = {
     defaultRadius: "xs",
 };
 
-export const royalTheme: Theme = {
+const royalTheme: Theme = {
     id: "royal",
     name: "Royal Purple",
     description: "Luxurious purples and golds fit for royalty",
@@ -1677,7 +1677,7 @@ export const royalTheme: Theme = {
     defaultRadius: "lg",
 };
 
-export const forestTheme: Theme = {
+const forestTheme: Theme = {
     id: "forest",
     name: "Forest Haven",
     description: "Earth tones and greens inspired by woodland serenity",
@@ -1879,7 +1879,7 @@ export const forestTheme: Theme = {
     defaultRadius: "lg",
 };
 
-export const midnightTheme: Theme = {
+const midnightTheme: Theme = {
     id: "midnight",
     name: "Midnight Blue",
     description: "Dark elegant theme with deep blues and purples",
@@ -2081,7 +2081,7 @@ export const midnightTheme: Theme = {
     defaultRadius: "xs",
 };
 
-export const sunsetTheme: Theme = {
+const sunsetTheme: Theme = {
     id: "sunset",
     name: "Desert Sunset",
     description: "Warm oranges, pinks, and purples of a desert sunset",
@@ -2283,7 +2283,7 @@ export const sunsetTheme: Theme = {
     defaultRadius: "xl",
 };
 
-export const arcticTheme: Theme = {
+const arcticTheme: Theme = {
     id: "arctic",
     name: "Arctic Frost",
     description: "Cool blues and whites inspired by arctic landscapes",
@@ -2485,7 +2485,7 @@ export const arcticTheme: Theme = {
     defaultRadius: "sm",
 };
 
-export const lavenderTheme: Theme = {
+const lavenderTheme: Theme = {
     id: "lavender",
     name: "Lavender Fields",
     description: "Soft purples and pastels inspired by lavender fields",
@@ -2687,7 +2687,7 @@ export const lavenderTheme: Theme = {
     defaultRadius: "md",
 };
 
-export const corporateTheme: Theme = {
+const corporateTheme: Theme = {
     id: "corporate",
     name: "Corporate Professional",
     description: "Clean, professional theme for business applications",
@@ -2889,7 +2889,7 @@ export const corporateTheme: Theme = {
     defaultRadius: "sm",
 };
 
-export const neonTheme: Theme = {
+const neonTheme: Theme = {
     id: "neon",
     name: "Neon Cyberpunk",
     description: "Bright neon colors on dark backgrounds for a cyberpunk feel",
@@ -3091,7 +3091,7 @@ export const neonTheme: Theme = {
     defaultRadius: "xs",
 };
 
-export const vintageTheme: Theme = {
+const vintageTheme: Theme = {
     id: "vintage",
     name: "Vintage Sepia",
     description: "Warm browns and creams inspired by vintage photography",
@@ -3293,7 +3293,7 @@ export const vintageTheme: Theme = {
     defaultRadius: "md",
 };
 
-export const pastelTheme: Theme = {
+const pastelTheme: Theme = {
     id: "pastel",
     name: "Pastel Dream",
     description: "Soft pastel colors creating a gentle, dreamy atmosphere",
@@ -3495,7 +3495,7 @@ export const pastelTheme: Theme = {
     defaultRadius: "xl",
 };
 
-export const woodTheme: Theme = {
+const woodTheme: Theme = {
     id: "wood",
     name: "Natural Wood",
     description: "Warm wood grain colors inspired by classic chess boards",
@@ -3697,7 +3697,7 @@ export const woodTheme: Theme = {
     defaultRadius: "lg",
 };
 
-export const monochromeTheme: Theme = {
+const monochromeTheme: Theme = {
     id: "monochrome",
     name: "Pure Monochrome",
     description: "Classic black and white with grayscale accents",
@@ -3920,10 +3920,6 @@ export const builtInThemes: Theme[] = [
     woodTheme,
     monochromeTheme,
 ];
-
-export function getBuiltInThemes(): Theme[] {
-    return builtInThemes;
-}
 
 export function getBuiltInThemeById(id: string): Theme | null {
     return builtInThemes.find((theme) => theme.id === id) || null;

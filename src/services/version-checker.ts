@@ -138,22 +138,7 @@ export async function checkForUpdates(config: VersionCheckConfig): Promise<Versi
     }
 }
 
-export function createGitHubVersionConfig(
-    owner: string,
-    repo: string,
-    currentVersion: string,
-    options?: Partial<VersionCheckConfig>,
-): VersionCheckConfig {
-    return {
-        versionUrl: `https://api.github.com/repos/${owner}/${repo}/releases/latest`,
-        currentVersion,
-        timeout: 15000,
-        skipInDev: true,
-        ...options,
-    };
-}
-
-export const VERSION_CHECK_STORAGE = {
+const VERSION_CHECK_STORAGE = {
     LAST_CHECK: "version-check-last",
     SKIP_VERSION: "version-check-skip",
     ENABLED: "version-check-enabled",
@@ -205,13 +190,5 @@ export function isVersionCheckEnabled(): boolean {
         return enabled !== "false";
     } catch {
         return true;
-    }
-}
-
-export function setVersionCheckEnabled(enabled: boolean): void {
-    try {
-        localStorage.setItem(VERSION_CHECK_STORAGE.ENABLED, enabled.toString());
-    } catch (error) {
-        logError(`Failed to set version check enabled state: ${error}`);
     }
 }
