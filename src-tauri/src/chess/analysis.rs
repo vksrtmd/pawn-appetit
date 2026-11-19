@@ -156,6 +156,7 @@ impl GameAnalysisService {
     /// # Errors
     /// Returns `Error` if a move is illegal, engine or DB operations fail, or the
     /// review is cancelled (`Error::AnalysisCancelled`).
+    #[allow(clippy::too_many_arguments)]
     pub async fn analyze_game(
         id: String,
         engine: String,

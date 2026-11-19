@@ -14,7 +14,7 @@
     "test": "vitest run",
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml --no-default-features",
     "lint": "oxlint",
-    "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features",
+    "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --no-default-features -- -D warnings",
     "lint:fix": "oxlint --fix",
     "fmt": "oxfmt",
     "fmt:check": "oxfmt --check",

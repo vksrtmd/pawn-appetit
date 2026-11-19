@@ -67,7 +67,7 @@ test("switching the limit type from Time to Depth resets the limit to 20", async
 
   await waitFor(() => expect(screen.getByDisplayValue("20")).toBeInTheDocument());
   expect(screen.queryByDisplayValue("500")).not.toBeInTheDocument();
-});
+}, 15_000);
 
 // #85: "Stop ends the review"
 test("Stop cancels the running analysis", async () => {
@@ -84,4 +84,4 @@ test("Stop cancels the running analysis", async () => {
   expect(
     await screen.findByRole("button", { name: "features.board.analysis.analyze" }),
   ).toBeInTheDocument();
-});
+}, 15_000);

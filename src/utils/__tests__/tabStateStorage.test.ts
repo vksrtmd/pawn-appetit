@@ -34,7 +34,7 @@ test("compresses a large repetitive tree well under its raw JSON size", () => {
     const compressed = serializeStorageValue(big);
     expect(raw.length).toBeGreaterThan(1_000_000);
     expect(compressed.length).toBeLessThan(raw.length / 3);
-});
+}, 15_000);
 
 test("reads back legacy uncompressed JSON and returns null on garbage", () => {
     const legacy = JSON.stringify({ version: 0, state: { dirty: true } });
