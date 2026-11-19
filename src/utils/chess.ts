@@ -253,11 +253,10 @@ function parseRatingTag(value: string | undefined): number | undefined {
 
 const escapeHeader = (value: string) => value.replace(/[\\"]/g, "\\$&");
 const unescapeHeader = (value: string) => value.replace(/\\([\\"])/g, "$1");
-// A PGN comment ends at the first `}` and has no escape, so the app writes `}` as \u007d
-// (and `\` as `\\`, to keep the two apart) and reads them back.
-const escapeComment = (text: string) => text.replace(/\\/g, "\\\\").replace(/}/g, "\\u007d");
-const unescapeComment = (text: string) =>
-    text.replace(/\\(\\|u007d)/g, (_, c) => (c === "u007d" ? "}" : "\\"));
+// A PGN comment ends at the first `}` and has no escape, so the app writes `}` as \u007d and reads
+// that back. Other backslashes stay as they are, as in any other program's PGN.
+const escapeComment = (text: string) => text.replace(/}/g, "\\u007d");
+const unescapeComment = (text: string) => text.replaceAll("\\u007d", "}");
 
 export function headersToPGN(game: GameHeaders): string {
     const e = escapeHeader;
@@ -267,7 +266,7 @@ export function headersToPGN(game: GameHeaders): string {
 [Round "${e(game.round || "?")}"]
 [White "${e(game.white || "?")}"]
 [Black "${e(game.black || "?")}"]
-[Result "${game.result}"]
+[Result "${e(game.result)}"]
 `;
     if (game.time) {
         headers += `[UTCTime "${e(game.time)}"]\n`;
@@ -282,7 +281,7 @@ export function headersToPGN(game: GameHeaders): string {
         headers += `[Start "${JSON.stringify(game.start)}"]\n`;
     }
     if (game.orientation) {
-        headers += `[Orientation "${game.orientation}"]\n`;
+        headers += `[Orientation "${e(game.orientation)}"]\n`;
     }
     if (game.time_control) {
         headers += `[TimeControl "${e(game.time_control)}"]\n`;
@@ -806,6 +805,11 @@ function innerParsePGN(
     }
 
     return tree;
+}
+
+/** The headers of a PGN game, read without parsing its moves, so an unreadable move can't fail it. */
+export async function parseHeaders(pgn: string): Promise<GameHeaders> {
+    return getPgnHeaders(unwrap(await commands.lexPgn(pgn)));
 }
 
 export async function parsePGN(

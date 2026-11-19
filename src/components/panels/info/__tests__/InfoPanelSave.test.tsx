@@ -3,10 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { getDefaultStore } from "jotai";
 import { beforeEach, expect, test, vi } from "vitest";
 
-const { save, readGames, openConfirmModal } = vi.hoisted(() => ({
+const { save, readGames, openConfirmModal, show } = vi.hoisted(() => ({
+  show: vi.fn<(...a: unknown[]) => void>(),
   save: vi.fn<(...a: unknown[]) => Promise<string>>(),
   readGames: vi.fn<(...a: unknown[]) => unknown>(),
-  openConfirmModal: vi.fn<(o: { onConfirm: () => Promise<void> }) => void>(),
+  openConfirmModal: vi.fn<(o: { onConfirm: () => Promise<void>; onCancel?: () => void }) => void>(),
 }));
 
 vi.mock("@tauri-apps/plugin-log", () => ({
@@ -32,17 +33,19 @@ vi.mock("../GameSelector", () => ({
     </button>
   ),
 }));
+vi.mock("@mantine/notifications", () => ({ notifications: { show } }));
 vi.mock("@/utils/chess", () => ({
-  parsePGN: async (pgn: string) => ({
-    ...(await import("@/utils/treeReducer")).defaultTree(),
-    pgn,
-  }),
+  parsePGN: async (pgn: string) => {
+    if (pgn.includes("BAD"))
+      throw new (await import("@/utils/pgnParseError")).PgnParseError("Qh8", 3);
+    return { ...(await import("@/utils/treeReducer")).defaultTree(), pgn };
+  },
 }));
 
 import { TreeStateProvider } from "@/components/TreeStateContext";
 import { currentTabAtom, tabsAtom, activeTabAtom } from "@/state/atoms";
 import { renderWithProviders } from "@/test/render";
-import type { Tab } from "@/utils/tabs";
+import type { Tab } from "@/utils/tabSchema";
 import { defaultTree } from "@/utils/treeReducer";
 import InfoPanel from "../InfoPanel";
 
@@ -88,4 +91,19 @@ test("the game switch saves the tab, then opens the game that was clicked", asyn
   expect(save).toHaveBeenCalledWith("tab1", { dir: "/docs" });
   await waitFor(() => expect(readGames).toHaveBeenCalledWith("/d/a.pgn", 2, 2));
   expect(getDefaultStore().get(currentTabAtom)?.gameNumber).toBe(2);
+});
+
+test("a game that does not parse is reported and the tab stays on its current game", async () => {
+  readGames.mockResolvedValue({ status: "ok", data: ["1. e4 BAD *"] });
+  renderWithProviders(
+    <TreeStateProvider id="tab1">
+      <InfoPanel />
+    </TreeStateProvider>,
+  );
+  await userEvent.click(await screen.findByText(/units\.count/));
+  await userEvent.click(await screen.findByText("pick game 3"));
+  await openConfirmModal.mock.calls[0][0].onCancel?.();
+
+  await waitFor(() => expect(show).toHaveBeenCalledTimes(1));
+  expect(getDefaultStore().get(currentTabAtom)?.gameNumber).toBe(0);
 });

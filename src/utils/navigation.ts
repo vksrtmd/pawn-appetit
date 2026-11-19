@@ -1,5 +1,5 @@
 import type { NavigateOptions } from "@tanstack/react-router";
-import type { Tab } from "@/utils/tabs";
+import type { Tab } from "@/utils/tabSchema";
 
 /**
  * Navigation utilities for conditional database modal flows

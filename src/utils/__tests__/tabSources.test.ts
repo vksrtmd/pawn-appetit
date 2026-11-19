@@ -40,3 +40,9 @@ test("deleting a directory drops the links of tabs for files inside it", () => {
     const next = dropFileLinks(tabs, "/dir");
     expect(next.map((t) => t.source === null)).toEqual([true, false]);
 });
+
+test("deleting a folder drops the links of files inside it for Windows paths too", () => {
+    const tabs = [tab("1", "C:\\d\\sub\\a.pgn"), tab("2", "C:\\d\\subway.pgn")];
+    const next = dropFileLinks(tabs, "C:\\d\\sub");
+    expect(next.map((t) => t.source === null)).toEqual([true, false]);
+});

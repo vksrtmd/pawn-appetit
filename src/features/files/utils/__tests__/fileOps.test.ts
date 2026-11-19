@@ -1,14 +1,32 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import type { FileMetadata } from "../file";
-import { deleteFile, removeEntry, renameFile } from "../fileOps";
+import {
+    deleteFile,
+    RenameExistsError,
+    RenameSidecarError,
+    removeEntry,
+    renameFile,
+} from "../fileOps";
 
-const fs = vi.hoisted(() => ({ files: new Map<string, string>() }));
+const fs = vi.hoisted(() => ({
+    files: new Map<string, string>(),
+    insensitive: false,
+    failRename: false,
+    failWrite: false,
+}));
 
 vi.mock("@tauri-apps/plugin-fs", () => ({
-    exists: async (p: string) => fs.files.has(p),
+    exists: async (p: string) =>
+        fs.files.has(p) ||
+        (fs.insensitive && [...fs.files.keys()].some((k) => k.toLowerCase() === p.toLowerCase())),
+    readDir: async () => [...fs.files.keys()].map((k) => ({ name: k.split("/").pop() })),
     readTextFile: async (p: string) => fs.files.get(p) ?? "",
-    writeTextFile: async (p: string, c: string) => void fs.files.set(p, c),
+    writeTextFile: async (p: string, c: string) => {
+        if (fs.failWrite) throw new Error("read-only");
+        fs.files.set(p, c);
+    },
     rename: async (a: string, b: string) => {
+        if (fs.failRename) throw new Error("permission denied");
         fs.files.set(b, fs.files.get(a) ?? "");
         fs.files.delete(a);
     },
@@ -30,6 +48,9 @@ const meta = (name: string): FileMetadata => ({
 });
 
 beforeEach(() => {
+    fs.insensitive = false;
+    fs.failRename = false;
+    fs.failWrite = false;
     fs.files.clear();
     fs.files.set("/d/a.pgn", "A");
     fs.files.set("/d/a.info", '{"type":"repertoire","tags":["x"]}');
@@ -72,5 +93,37 @@ describe("removeEntry", () => {
         ];
         const next = removeEntry(list, "/d/a.pgn");
         expect(next.map((e) => e.path)).toEqual(["/d/b.pgn", "/d/s"]);
+    });
+});
+
+describe("renameFile edge cases", () => {
+    test("a new name with $& or $` builds the path from the name as typed", async () => {
+        const renamed = await renameFile(meta("a"), "x$&y$`z", "game");
+        expect(renamed.path).toBe("/d/x$&y$`z.pgn");
+    });
+
+    test("a case-only rename succeeds where the file system treats both names as one file", async () => {
+        // Case-insensitive: "exists" sees A.pgn as a.pgn, but the directory lists the real name
+        fs.insensitive = true;
+        await expect(renameFile(meta("a"), "A", "game")).resolves.toMatchObject({
+            path: "/d/A.pgn",
+        });
+        expect(fs.files.has("/d/A.pgn")).toBe(true);
+    });
+
+    test("a taken name is reported as RenameExistsError, any other failure is not", async () => {
+        await expect(renameFile(meta("a"), "b", "game")).rejects.toBeInstanceOf(RenameExistsError);
+        fs.failRename = true;
+        const err = await renameFile(meta("a"), "c", "game").catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(Error);
+        expect(err).not.toBeInstanceOf(RenameExistsError);
+    });
+
+    test("a sidecar failure after the rename still reports the renamed file", async () => {
+        fs.failWrite = true;
+        const err = await renameFile(meta("a"), "c", "game").catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(RenameSidecarError);
+        expect((err as RenameSidecarError).renamed.path).toBe("/d/c.pgn");
+        expect(fs.files.has("/d/c.pgn")).toBe(true);
     });
 });

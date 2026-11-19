@@ -195,6 +195,7 @@ function GamesTable({
             ? Array.from({ length: game.match_ply }, () => 0)
             : undefined,
       });
+      if (id === null) return;
       // Carry the query across, so coming back from the game still has it.
       seedLocalOptions({ tab: id, options: localOptions });
       navigate({ to: "/boards" });

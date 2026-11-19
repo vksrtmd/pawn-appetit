@@ -7,7 +7,7 @@ import { getDefaultStore, useAtomValue } from "jotai";
 import { useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { keyMapAtom } from "@/state/keybindings";
-import { closeActiveTab, readTree, save } from "@/state/tabSession";
+import { closeActiveTab, isDirty, save } from "@/state/tabSession";
 import { activeTabAtom, tabsAtom } from "@/state/uiAtoms";
 
 /**
@@ -22,7 +22,7 @@ export function requestCloseTab(
   const tab = getDefaultStore()
     .get(tabsAtom)
     .find((x) => x.value === tabId);
-  if (!tab?.source || !readTree(tabId)?.dirty) return close();
+  if (!tab?.source || !isDirty(tabId)) return close();
 
   modals.openConfirmModal({
     title: t("common.unsavedChanges.title"),

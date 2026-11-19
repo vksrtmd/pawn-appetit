@@ -1,5 +1,6 @@
 import { Button, Modal, Stack } from "@mantine/core";
 import { useLoaderData } from "@tanstack/react-router";
+import { notifications } from "@mantine/notifications";
 import { useSetAtom } from "jotai";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -10,7 +11,7 @@ import {
   type PgnTarget,
   resolvePgnTarget,
 } from "@/features/files/components/PgnSourceInput";
-import { renameFile } from "@/features/files/utils/fileOps";
+import { RenameExistsError, RenameSidecarError, renameFile } from "@/features/files/utils/fileOps";
 import { tabsAtom } from "@/state/atoms";
 import { followRename } from "@/utils/tabSources";
 import { createFile } from "@/utils/files";
@@ -109,11 +110,22 @@ export function EditModal({
 
   async function editFile() {
     let renamed: FileMetadata;
+    let failure = "";
     try {
       renamed = await renameFile(metadata, filename, filetype);
-    } catch {
-      setError(t("fileRename.exists", { name: filename }));
-      return;
+    } catch (e) {
+      if (e instanceof RenameSidecarError) {
+        // The file did move: the tabs and the list follow it, then the user hears about the sidecar
+        renamed = e.renamed;
+        failure = t("fileRename.sidecarFailed", { name: filename });
+      } else {
+        setError(
+          e instanceof RenameExistsError
+            ? t("fileRename.exists", { name: filename })
+            : t("fileRename.failed", { name: filename }),
+        );
+        return;
+      }
     }
     mutate();
     setSelected((selected) => (selected?.path === metadata.path ? renamed : selected));
@@ -121,6 +133,7 @@ export function EditModal({
 
     setError("");
     setOpened(false);
+    if (failure) notifications.show({ color: "red", message: failure });
   }
 
   return (

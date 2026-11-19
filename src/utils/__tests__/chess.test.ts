@@ -247,4 +247,33 @@ describe("PGN text that would break the format survives write then parse", () =>
         expect(back.headers.other?.Annotator).toBe('a "b" \\');
         expect(back.root.comment).toBe("set {a} and \\} too");
     });
+
+    test("a backslash in a comment is written as is, and only } is escaped", () => {
+        const root = defaultTree().root;
+        root.comment = "a\\b} c";
+        const pgn = getPGN(root, {
+            headers: null,
+            glyphs: false,
+            comments: true,
+            variations: false,
+            extraMarkups: false,
+        });
+        expect(pgn).toContain("{a\\b\\u007d c}");
+    });
+
+    test("a backslash in a comment in a file from another program reads back as written", async () => {
+        vi.mocked(commands.lexPgn).mockImplementationOnce(async (p) => lexRaw(p));
+        const back = await parsePGN("{path C:\\dir and \\u007d} *");
+        expect(back.root.comment).toBe("path C:\\dir and }");
+    });
+
+    test("Result and Orientation headers are escaped like the others", () => {
+        const headers = {
+            ...defaultTree().headers,
+            result: '1-0"]' as never,
+            orientation: 'w"' as never,
+        };
+        expect(headersToPGN(headers)).toContain('[Result "1-0\\"]"]');
+        expect(headersToPGN(headers)).toContain('[Orientation "w\\""]');
+    });
 });

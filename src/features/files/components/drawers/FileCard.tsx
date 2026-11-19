@@ -1,5 +1,4 @@
 import { ActionIcon, Badge, Box, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
-import { PgnParseError } from "@/utils/pgnParseError";
 import { IconEdit, IconEye, IconTrash } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtom, useSetAtom } from "jotai";
@@ -56,23 +55,19 @@ function FileCard({
   }, [selected, page]);
 
   async function openGame() {
-    try {
-      await createTab({
-        tab: {
-          name: selected.name || "Untitled",
-          type: "analysis",
-        },
-        setTabs,
-        setActiveTab,
-        pgn: selectedGame || "",
-        srcInfo: selected,
-        gameNumber: page,
-      });
-    } catch (e) {
-      // the parse error was shown; no tab was opened
-      if (e instanceof PgnParseError) return;
-      throw e;
-    }
+    // createTab resolves null when the game did not parse (the user was told): open nothing
+    const id = await createTab({
+      tab: {
+        name: selected.name || "Untitled",
+        type: "analysis",
+      },
+      setTabs,
+      setActiveTab,
+      pgn: selectedGame || "",
+      srcInfo: selected,
+      gameNumber: page,
+    });
+    if (id === null) return;
     navigate({ to: "/boards" });
   }
 

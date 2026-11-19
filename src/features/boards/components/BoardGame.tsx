@@ -1061,9 +1061,9 @@ function BoardGame() {
       setActiveTab(currentActiveTab);
 
       // Get the PGN and FEN initial from the newly created tab
-      // The tab stores its state in sessionStorage with the tab ID
+      // Read the stored tree of the new tab; none when the tab was not opened
       try {
-        const treeState = readTree(newTabId);
+        const treeState = newTabId === null ? null : readTree(newTabId);
         if (treeState) {
           // Get PGN from the tree state using getPGN
           const tabPgn = getPGN(treeState.root, {

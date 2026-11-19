@@ -1,7 +1,7 @@
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
 import { primaryColorAtom } from "@/state/atoms";
-import { genID } from "@/utils/tabs";
+import { genID } from "@/utils/tabSchema";
 import { builtInThemes, getBuiltInThemeById } from "../data/builtInThemes";
 import type { Theme, ThemeExport, ThemeOperations } from "../types/theme";
 import { themeSchema } from "../types/theme";

@@ -30,7 +30,7 @@ import { TreeStateProvider } from "@/components/TreeStateContext";
 import { getBoardCommandTarget } from "@/features/boards/commands/boardCommandRegistry";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { renderWithProviders } from "@/test/render";
-import type { Tab } from "@/utils/tabs";
+import type { Tab } from "@/utils/tabSchema";
 import BoardVariants from "../BoardVariants";
 
 beforeEach(() => {

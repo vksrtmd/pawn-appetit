@@ -55,3 +55,15 @@ test("remaining time comes from elapsed real time, not from counted ticks", () =
     expect(result.current.white).toBe(175_000);
     expect(result.current.black).toBe(180_000);
 });
+
+test("a move that lands after the flag fell leaves 0 and earns no increment", () => {
+    const { result, rerender } = setup();
+
+    // The timer callback is late: white's 3:00 ran out 20 s before the move is seen.
+    act(() => {
+        vi.setSystemTime(Date.now() + 200_000);
+        rerender({ turn: "black" });
+    });
+
+    expect(result.current.white).toBe(0);
+});
