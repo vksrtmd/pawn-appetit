@@ -64,6 +64,8 @@ pub fn apply<T>(
 }
 
 /// The file `conn` is connected to; none for an in-memory database.
+// The QueryableByName derive below expands to `file: file`.
+#[allow(clippy::redundant_field_names)]
 fn database_file(conn: &mut SqliteConnection) -> Option<std::path::PathBuf> {
     #[derive(QueryableByName)]
     struct Attached {

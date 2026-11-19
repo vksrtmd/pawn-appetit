@@ -142,7 +142,7 @@ pub fn normalize_game(
         match_next_move: None,
         fen: fen.to_string(),
         moves: GameTree::from_bytes(&game.moves, Some(start.clone()))?
-            .from_position(Some(start))
+            .movetext_from(Some(start))
             .to_string(),
     })
 }

@@ -184,7 +184,7 @@ impl GameTree {
 
 impl std::fmt::Display for GameTree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.from_position(None).fmt(f)
+        self.movetext_from(None).fmt(f)
     }
 }
 
@@ -206,7 +206,7 @@ impl std::fmt::Display for FromPosition<'_> {
 
 impl GameTree {
     /// The tree as movetext whose first move is played from `start`.
-    pub fn from_position(&self, start: Option<Chess>) -> FromPosition<'_> {
+    pub fn movetext_from(&self, start: Option<Chess>) -> FromPosition<'_> {
         FromPosition(self, start)
     }
 }
@@ -315,9 +315,10 @@ impl Visitor for Importer {
                     let read = |mode| {
                         Chess::from_setup(setup.clone(), mode)
                             .or_else(PositionError::ignore_too_much_material)
+                            .ok()
                     };
-                    if let Ok(setup) = read(shakmaty::CastlingMode::Standard)
-                        .or_else(|_| read(shakmaty::CastlingMode::Chess960))
+                    if let Some(setup) = read(shakmaty::CastlingMode::Standard)
+                        .or_else(|| read(shakmaty::CastlingMode::Chess960))
                     {
                         self.game.position = setup;
                     } else {
