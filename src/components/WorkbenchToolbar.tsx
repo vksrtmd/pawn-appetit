@@ -15,7 +15,7 @@ import {
   IconSwitchVertical,
 } from "@tabler/icons-react";
 
-export type WorkbenchToolbarAction = {
+type WorkbenchToolbarAction = {
   id: string;
   label: string;
   icon: React.ReactNode;

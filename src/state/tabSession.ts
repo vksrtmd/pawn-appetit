@@ -52,7 +52,7 @@ export function registerTabStore(tabId: string, store: TreeStore): () => void {
     };
 }
 
-export function getTabStore(tabId: string): TreeStore {
+function getTabStore(tabId: string): TreeStore {
     return stores.get(tabId) ?? createTreeStore(tabId);
 }
 

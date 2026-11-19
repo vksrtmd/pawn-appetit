@@ -7,36 +7,7 @@ import type { Theme, ThemeExport, ThemeOperations } from "../types/theme";
 import { themeSchema } from "../types/theme";
 
 // Storage for custom themes
-export const customThemesAtom = atomWithStorage<Theme[]>("custom-themes", []);
-
-// Cleanup atom to remove duplicate theme IDs on initialization
-export const cleanupDuplicateThemesAtom = atom(null, (get, set) => {
-    const customThemes = get(customThemesAtom);
-    const builtInThemeIds = new Set(builtInThemes.map((t) => t.id));
-
-    // Remove custom themes that have the same ID as built-in themes
-    // and remove duplicate custom themes (keep the first occurrence)
-    const seenIds = new Set<string>();
-    const cleanedThemes = customThemes.filter((theme) => {
-        if (builtInThemeIds.has(theme.id)) {
-            console.warn(
-                `Removing custom theme "${theme.name}" (${theme.id}) as it conflicts with a built-in theme`,
-            );
-            return false;
-        }
-        if (seenIds.has(theme.id)) {
-            console.warn(`Removing duplicate custom theme "${theme.name}" (${theme.id})`);
-            return false;
-        }
-        seenIds.add(theme.id);
-        return true;
-    });
-
-    // Only update storage if duplicates were found
-    if (cleanedThemes.length !== customThemes.length) {
-        set(customThemesAtom, cleanedThemes);
-    }
-});
+const customThemesAtom = atomWithStorage<Theme[]>("custom-themes", []);
 
 // Currently selected theme ID
 export const currentThemeIdAtom = atomWithStorage<string>("current-theme-id", "default");

@@ -8,7 +8,7 @@ interface TelemetrySettingsProps {
   className?: string;
 }
 
-export const TelemetrySettings: React.FC<TelemetrySettingsProps> = ({ className }) => {
+const TelemetrySettings: React.FC<TelemetrySettingsProps> = ({ className }) => {
   const { t } = useTranslation();
   const { isEnabled, loading, error, toggleTelemetry } = useTelemetry();
 

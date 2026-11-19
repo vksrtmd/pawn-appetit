@@ -8,7 +8,7 @@ import { getDocumentDir } from "@/utils/documentDir";
 import { openFile } from "@/utils/files";
 import type { Tab } from "@/utils/tabSchema";
 
-export type SearchResultGroup =
+type SearchResultGroup =
   | "Commands"
   | "Games"
   | "Players"

@@ -31,7 +31,7 @@ export interface TreeNode {
     reviewLine?: boolean;
 }
 
-export interface ReportState {
+interface ReportState {
     progress: number;
     isCompleted: boolean;
     inProgress: boolean;

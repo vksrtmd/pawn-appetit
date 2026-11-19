@@ -3,7 +3,7 @@ import { unwrap } from "./unwrap";
 
 export type InstallMethod = "download" | "brew" | "package";
 
-export interface PackageManagerStatus {
+interface PackageManagerStatus {
     brew: boolean;
     apt: boolean;
     dnf: boolean;
@@ -12,7 +12,7 @@ export interface PackageManagerStatus {
 
 let packageManagerStatusCache: PackageManagerStatus | null = null;
 
-export async function getPackageManagerStatus(): Promise<PackageManagerStatus> {
+async function getPackageManagerStatus(): Promise<PackageManagerStatus> {
     if (packageManagerStatusCache) {
         return packageManagerStatusCache;
     }
@@ -55,8 +55,4 @@ export async function isInstallMethodSupported(method: InstallMethod): Promise<b
         default:
             return false;
     }
-}
-
-export function clearPackageManagerCache(): void {
-    packageManagerStatusCache = null;
 }

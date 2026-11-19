@@ -72,30 +72,3 @@ export function SidePanelDrawerLayout({
     </Stack>
   );
 }
-
-/**
- * A specialized version for database/file layouts with common styling
- */
-export function DatabaseSidePanelDrawerLayout({
-  mainContent,
-  detailContent,
-  isDetailOpen,
-  onDetailClose,
-  detailTitle = "Details",
-  layoutType,
-}: Omit<SidePanelDrawerLayoutProps, "mainContentProps" | "detailContentProps">) {
-  return (
-    <SidePanelDrawerLayout
-      mainContent={mainContent}
-      detailContent={detailContent}
-      isDetailOpen={isDetailOpen}
-      onDetailClose={onDetailClose}
-      detailTitle={detailTitle}
-      layoutType={layoutType}
-      mainContentProps={{
-        style: { overflow: "hidden" },
-        // No additional padding needed since base component provides p="md"
-      }}
-    />
-  );
-}

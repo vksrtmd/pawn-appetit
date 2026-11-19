@@ -24,20 +24,6 @@ export async function saveAnalyzedGame(gameId: string, analyzedPgn: string): Pro
 }
 
 /**
- * Get an analyzed PGN for a game
- * @param gameId - Unique identifier (URL for Chess.com, ID for Lichess)
- * @returns The analyzed PGN string if found, null otherwise
- */
-export async function getAnalyzedGame(gameId: string): Promise<string | null> {
-    try {
-        const analyzedGames = await readHistoryFile<AnalyzedGamesMap>(FILENAME, {});
-        return analyzedGames[gameId] || null;
-    } catch {
-        return null;
-    }
-}
-
-/**
  * Get all analyzed games
  * @returns Map of game IDs to analyzed PGNs
  */
@@ -47,18 +33,6 @@ export async function getAllAnalyzedGames(): Promise<AnalyzedGamesMap> {
     } catch {
         return {};
     }
-}
-
-/**
- * Remove an analyzed game
- * @param gameId - Unique identifier (URL for Chess.com, ID for Lichess)
- */
-export async function removeAnalyzedGame(gameId: string): Promise<void> {
-    await updateHistoryFile<AnalyzedGamesMap>(FILENAME, {}, (games) => {
-        if (!(gameId in games)) return undefined;
-        const { [gameId]: _removed, ...rest } = games;
-        return rest;
-    });
 }
 
 /**
@@ -111,11 +85,4 @@ export async function removeAnalyzedGamesForAccount(
 
         return filteredGames;
     });
-}
-
-/**
- * Remove ALL analyzed games (clear all analysis)
- */
-export async function clearAllAnalyzedGames(): Promise<void> {
-    await updateHistoryFile<AnalyzedGamesMap>(FILENAME, {}, () => ({}));
 }
