@@ -61,4 +61,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VITE_SERVER_URL: ${{ vars.SERVER_URL }}
         with:
-          args: ${{ matrix.args }} --config '{"bundle":{"createUpdaterArtifacts":false}}'
+          args: ${{ matrix.args }}

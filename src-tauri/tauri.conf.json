@@ -28,7 +28,7 @@
         "bundleMediaFramework": true
       }
     },
-    "publisher": "Pawn-Appetit Team",
+    "publisher": "vksrtmd",
     "fileAssociations": [
       {
         "ext": [
@@ -52,8 +52,7 @@
     "resources": {
       "../sound/": "sound/"
     },
-    "targets": "all",
-    "createUpdaterArtifacts": true
+    "targets": "all"
   },
   "build": {
     "beforeDevCommand": "pnpm start-vite",
@@ -69,12 +68,6 @@
           "index": 1,
           "takesValue": true
         }
-      ]
-    },
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENBQUUwNEI2OTg2RjA5QzUKUldURkNXK1l0Z1N1eW9ldFQwV29oZVBGQVc0RFR6cml2WERFWXlhRDE4di8yaW1EbjRCUUY2bHEK",
-      "endpoints": [
-        "https://github.com/Pawn-Appetit/pawn-appetit/releases/latest/download/latest.json"
       ]
     }
   },
@@ -105,7 +98,7 @@
         ],
         "enable": true
       },
-      "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost data: blob: https:; media-src 'self' asset: https://asset.localhost http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://github.com https://api.github.com http://127.0.0.1:*"
+      "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost data: blob: https:; media-src 'self' asset: https://asset.localhost http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self' https://github.com http://127.0.0.1:*"
     }
   }
 }
