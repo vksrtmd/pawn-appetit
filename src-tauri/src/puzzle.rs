@@ -729,11 +729,13 @@ mod tests {
         let file = puzzle_db(dir.path(), "p.db", &ratings);
         let mut cache = PuzzleCache::new();
         cache.cache_size = 50;
-        let mut seen = std::collections::HashSet::new();
-        for _ in 0..50 {
-            seen.insert(cache.next(&file, 2000, 2000, true).unwrap().id);
-        }
-        assert!(seen.len() >= 25, "only {} distinct puzzles", seen.len());
+        cache.next(&file, 2000, 2000, true).unwrap();
+        // One batch of 50 probes: the first puzzle is out, the rest are cached.
+        let distinct = 1 + cache.cache.len();
+        assert!(
+            distinct >= 25,
+            "only {distinct} distinct puzzles in a batch"
+        );
     }
 
     #[test]

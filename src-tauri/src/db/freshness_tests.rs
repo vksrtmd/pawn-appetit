@@ -343,7 +343,10 @@ fn a_failed_import_into_an_existing_file_keeps_its_games_and_counts() {
     let dir = Dir::new("failed-import");
     let file = dir.import("a", E4_GAME);
     let cut = truncated_archive(&dir, 40_000);
-    assert!(import_pgn(&cut, &file, None, "T", "D", |_| {}).is_err());
+    let mut read = 0;
+    assert!(import_pgn(&cut, &file, None, "T", "D", |n| read = n).is_err());
+    // The archive broke late, after thousands of rows were written.
+    assert!(read >= 5000, "only {read} games read before the error");
 
     let state = AppState::default();
     let mut conn = get_db_or_create(&state, file.to_str().unwrap()).unwrap();
