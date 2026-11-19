@@ -108,7 +108,7 @@ fn an_edit_after_an_import_into_a_new_file_runs_with_a_journal_and_foreign_keys(
     assert_eq!(pragma(&mut conn, "journal_mode"), "delete");
     assert_eq!(pragma(&mut conn, "foreign_keys"), "1");
     // The importer's own connection keeps its fast settings.
-    let mut importer = ConnectionOptions::import()
+    let mut importer = ConnectionOptions::import(true)
         .connect(file.to_str().unwrap())
         .unwrap();
     assert_eq!(pragma(&mut importer, "journal_mode"), "off");
@@ -319,4 +319,67 @@ fn deleting_one_game_removes_only_its_own_orphans() {
     assert_eq!(players, ["Unknown", "Alice", "Bob", "Eve"]);
     assert_eq!(events, ["Unknown", "Open"]);
     assert_eq!(sites, ["Unknown", "Open site"]);
+}
+
+/// A zstd archive of `n` distinct games, cut in half.
+fn truncated_archive(dir: &Dir, n: usize) -> PathBuf {
+    let mut pgn = String::new();
+    for i in 0..n {
+        pgn.push_str(&format!(
+            "[Date \"2026.09.09\"]\n[UTCTime \"{:02}:{:02}:{:02}\"]\n[White \"p{i}\"]\n[Black \"q{i}\"]\n\n1. e4 e5 *\n\n",
+            (i / 3600) % 24,
+            (i / 60) % 60,
+            i % 60
+        ));
+    }
+    let bytes = zstd::encode_all(pgn.as_bytes(), 1).unwrap();
+    let path = dir.0.join("cut.pgn.zst");
+    std::fs::write(&path, &bytes[..bytes.len() / 2]).unwrap();
+    path
+}
+
+#[test]
+fn a_failed_import_into_an_existing_file_keeps_its_games_and_counts() {
+    let dir = Dir::new("failed-import");
+    let file = dir.import("a", E4_GAME);
+    let cut = truncated_archive(&dir, 40_000);
+    assert!(import_pgn(&cut, &file, None, "T", "D", |_| {}).is_err());
+
+    let state = AppState::default();
+    let mut conn = get_db_or_create(&state, file.to_str().unwrap()).unwrap();
+    let rows: i64 = games::table.count().get_result(&mut conn).unwrap();
+    assert_eq!(rows, 1);
+    let counts = super::core::db_counts(&mut conn).unwrap();
+    assert_eq!((counts.games, counts.players), (1, 2));
+    let check: Vec<String> = diesel::sql_query("PRAGMA integrity_check")
+        .load::<IntegrityRow>(&mut conn)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.integrity_check)
+        .collect();
+    assert_eq!(check, ["ok"]);
+}
+
+#[derive(QueryableByName)]
+struct IntegrityRow {
+    #[diesel(sql_type = Text)]
+    integrity_check: String,
+}
+
+#[test]
+fn a_failed_import_into_a_new_file_leaves_no_file() {
+    let dir = Dir::new("failed-new");
+    let cut = truncated_archive(&dir, 3000);
+    let file = dir.db("new");
+    assert!(import_pgn(&cut, &file, None, "T", "D", |_| {}).is_err());
+    assert!(!file.exists());
+}
+
+#[test]
+fn an_import_into_a_new_file_runs_without_a_journal() {
+    // Fast path kept: only an existing file pays for a rollback journal.
+    assert!(matches!(
+        ConnectionOptions::import(true).journal_mode,
+        super::connection::JournalMode::Off
+    ));
 }

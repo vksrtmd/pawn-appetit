@@ -144,7 +144,11 @@ impl PuzzleCache {
         max_rating: u16,
     ) -> Result<Vec<Puzzle>, Error> {
         use diesel::dsl::{max, min};
+        // The ids of the matching puzzles only: ids outside the range would
+        // send most probes to the first puzzle after a gap.
         let (low, high): (Option<i32>, Option<i32>) = puzzles::table
+            .filter(puzzles::rating.le(max_rating as i32))
+            .filter(puzzles::rating.ge(min_rating as i32))
             .select((min(puzzles::id), max(puzzles::id)))
             .first(db)?;
         let (Some(low), Some(high)) = (low, high) else {
@@ -642,7 +646,7 @@ fn parse_pgn_header(line: &str) -> Option<(String, String)> {
     let value = parts.next()?;
 
     // Remove quotes if present
-    let value = if value.starts_with('"') && value.ends_with('"') {
+    let value = if value.len() >= 2 && value.starts_with('"') && value.ends_with('"') {
         &value[1..value.len() - 1]
     } else {
         value
@@ -714,6 +718,32 @@ mod tests {
         (0..n)
             .map(|_| cache.next(file, 0, 3000, random).unwrap().id)
             .collect()
+    }
+
+    #[test]
+    fn random_puzzles_spread_over_the_matching_range_when_ratings_follow_ids() {
+        let dir = tempfile::tempdir().unwrap();
+        let ratings: Vec<i32> = (0..1000)
+            .map(|i| if i < 900 { 1000 } else { 2000 })
+            .collect();
+        let file = puzzle_db(dir.path(), "p.db", &ratings);
+        let mut cache = PuzzleCache::new();
+        cache.cache_size = 50;
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..50 {
+            seen.insert(cache.next(&file, 2000, 2000, true).unwrap().id);
+        }
+        assert!(seen.len() >= 25, "only {} distinct puzzles", seen.len());
+    }
+
+    #[test]
+    fn a_header_with_a_lone_quote_is_not_a_header_value() {
+        assert_eq!(
+            parse_pgn_header("[FEN \"]"),
+            Some(("FEN".into(), "\"".into()))
+        );
+        let puzzles = parse("[FEN \"]\n[Moves \"a1a2\"]\n[Rating \"1500\"]\n");
+        assert!(puzzles.len() <= 1);
     }
 
     #[test]

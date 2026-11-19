@@ -14,7 +14,7 @@ use crate::error::Error;
 use crate::AppState;
 
 use super::process::{EngineProcess, LineEvent};
-use super::registry::EngineLines;
+use super::registry::{EngineKey, EngineLines, EngineRegistry};
 use super::types::{BestMoves, EngineOptions, GoMode};
 
 /// Manager for UCI engine processes, handling best-move queries and process lifecycle.
@@ -59,48 +59,15 @@ impl<'a> EngineManager<'a> {
         app: tauri::AppHandle,
     ) -> Result<Option<(f32, Vec<super::types::BestMoves>)>, Error> {
         let key = (tab.clone(), engine.clone());
-        let registry = self.state.engines.clone();
         let owner = owner.unwrap_or_else(|| tab.clone());
-        let started = registry
-            .get_or_start(key.clone(), owner, PathBuf::from(&engine))
-            .await?;
-
-        let mut process = started.process.lock().await;
-        if started.reader.is_none() {
-            // Reusing a running engine: return the cached result when nothing changed.
-            if options == process.options && go_mode == process.go_mode && process.is_searching() {
-                return Ok(Some((
-                    process.last_progress,
-                    process.last_best_moves.clone(),
-                )));
-            }
-            // Otherwise stop and reconfigure it once it has answered `isready`.
-            process.stop().await?;
-            drop(process);
-            wait_until_stopped(&started.process).await?;
-            if started.slot.is_closed() {
-                return Err(Error::EngineKilled);
-            }
-            process = started.process.lock().await;
-        }
-        process.set_options(options).await?;
-        process.go(&go_mode).await?;
-        drop(process);
-
-        // The creating call also starts the reader task, so engines run concurrently.
-        let Some(mut reader) = started.reader else {
-            return Ok(None);
-        };
-        let slot = started.slot;
-        let process = started.process;
-        tokio::spawn(async move {
-            info!(
-                "Engine loop started: tab={} engine={} session={}",
-                key.0,
-                key.1,
-                process.lock().await.lifecycle.session_id
-            );
-            pump(&process, reader, |proc, progress, best_lines, bestmove| {
+        run_search(
+            &self.state.engines,
+            key,
+            owner,
+            PathBuf::from(&engine),
+            go_mode,
+            options,
+            move |proc, progress, best_lines, bestmove| {
                 super::types::BestMovesPayload {
                     best_lines,
                     engine: id.clone(),
@@ -112,14 +79,70 @@ impl<'a> EngineManager<'a> {
                 }
                 .emit(&app)
                 .ok();
-            })
-            .await;
+            },
+        )
+        .await
+    }
+}
+
+/// Start (or reuse) the engine under `key` and search `options` with it, for every caller
+/// alike. The call that creates the process starts its reader task at once, before anything
+/// that can fail, so a failing call leaves a working engine in the slot, not an unread one.
+/// Then each caller stops a running search, waits for the engine to settle, configures and
+/// sends `go`; a caller that finds the same search already running gets its last result.
+async fn run_search(
+    registry: &EngineRegistry,
+    key: EngineKey,
+    owner: String,
+    path: PathBuf,
+    go_mode: GoMode,
+    options: EngineOptions,
+    emit: impl FnMut(&EngineProcess, f64, Vec<BestMoves>, Option<String>) + Send + 'static,
+) -> Result<Option<(f32, Vec<BestMoves>)>, Error> {
+    let started = registry.get_or_start(key.clone(), owner, path).await?;
+    if let Some(reader) = started.reader {
+        let (slot, process, registry, key) = (
+            started.slot.clone(),
+            started.process.clone(),
+            registry.clone(),
+            key,
+        );
+        tokio::spawn(async move {
+            info!(
+                "Engine loop started: tab={} engine={} session={}",
+                key.0,
+                key.1,
+                process.lock().await.lifecycle.session_id
+            );
+            pump(&process, reader, emit).await;
             info!("Engine process finished: tab: {}, engine: {}", key.0, key.1);
             process.lock().await.lifecycle.mark_stopped();
             registry.remove(&key, &slot);
         });
+    }
 
-        Ok(None)
+    loop {
+        let mut process = started.process.lock().await;
+        // Return the cached result when nothing changed.
+        if options == process.options && go_mode == process.go_mode && process.is_searching() {
+            return Ok(Some((
+                process.last_progress,
+                process.last_best_moves.clone(),
+            )));
+        }
+        if !process.is_searching() && !process.lifecycle.is_stopping() {
+            process.set_options(options).await?;
+            process.go(&go_mode).await?;
+            return Ok(None);
+        }
+        // Another search is running (or ending): stop it and look again once the engine has
+        // answered `isready`; a caller that got in meanwhile is then seen, not overrun.
+        process.stop().await?;
+        drop(process);
+        wait_until_stopped(&started.process).await?;
+        if started.slot.is_closed() {
+            return Err(Error::EngineKilled);
+        }
     }
 }
 
@@ -280,5 +303,97 @@ done
             crate::chess::test_support::eventually(2, || !finals.lock().unwrap().is_empty()).await
         );
         assert_eq!(*rig.finals.lock().unwrap(), vec![Some("d2d4".to_string())]);
+    }
+
+    fn counting_engine(dir: &std::path::Path, answer: &str) -> (PathBuf, PathBuf) {
+        let log = dir.join("gos");
+        let body = format!(
+            r#"while read l; do
+  case "$l" in
+    uci) echo uciok;;
+    isready) echo readyok;;
+    go*) echo go >> {}
+         echo "info depth 1 score cp 10 multipv 1 pv e2e4"; {answer};;
+  esac
+done
+"#,
+            log.display()
+        );
+        (script(dir, "engine.sh", &body), log)
+    }
+
+    fn opts(fen: &str) -> EngineOptions {
+        EngineOptions {
+            fen: fen.to_string(),
+            moves: vec![],
+            extra_options: vec![],
+        }
+    }
+
+    fn key() -> EngineKey {
+        ("tab".into(), "e".into())
+    }
+
+    #[tokio::test]
+    async fn a_failed_first_call_leaves_an_engine_the_next_call_can_search_with() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, _) = counting_engine(dir.path(), "echo bestmove d2d4");
+        let registry = EngineRegistry::default();
+        let finals = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = finals.clone();
+        let emit =
+            move |_: &EngineProcess, progress: f64, _: Vec<BestMoves>, best: Option<String>| {
+                if progress >= 100.0 {
+                    sink.lock().unwrap().push(best);
+                }
+            };
+        let bad = run_search(
+            &registry,
+            key(),
+            "tab".into(),
+            path.clone(),
+            GoMode::Infinite,
+            opts("not a fen"),
+            emit.clone(),
+        )
+        .await;
+        assert!(bad.is_err());
+        run_search(
+            &registry,
+            key(),
+            "tab".into(),
+            path,
+            GoMode::Infinite,
+            opts(START),
+            emit,
+        )
+        .await
+        .unwrap();
+        let f = finals.clone();
+        assert!(crate::chess::test_support::eventually(2, || !f.lock().unwrap().is_empty()).await);
+        assert_eq!(*finals.lock().unwrap(), vec![Some("d2d4".to_string())]);
+    }
+
+    #[tokio::test]
+    async fn two_first_calls_for_one_search_send_one_go() {
+        let dir = tempfile::tempdir().unwrap();
+        let (path, log) = counting_engine(dir.path(), "true");
+        let registry = EngineRegistry::default();
+        let call = || {
+            run_search(
+                &registry,
+                key(),
+                "tab".into(),
+                path.clone(),
+                GoMode::Infinite,
+                opts(START),
+                |_: &EngineProcess, _, _: Vec<BestMoves>, _| {},
+            )
+        };
+        let (a, b) = tokio::join!(call(), call());
+        a.unwrap();
+        b.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(std::fs::read_to_string(log).unwrap().lines().count(), 1);
     }
 }

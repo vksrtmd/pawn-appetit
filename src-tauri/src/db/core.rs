@@ -68,7 +68,8 @@ pub struct DbCounts {
 
 /// Counts as stored in the Info table, without the "Unknown" placeholder in
 /// players and events. Databases that never stored them are counted once and
-/// the result is written back.
+/// the result is written back: the one counts refresh outside `write::apply`,
+/// a self-heal of a file that predates the stored counts.
 pub fn db_counts(conn: &mut SqliteConnection) -> Result<DbCounts> {
     let read = |conn: &mut SqliteConnection| -> Result<Option<[i32; 3]>> {
         let mut out = [0; 3];
@@ -168,6 +169,22 @@ pub fn get_game(conn: &mut SqliteConnection, id: i32) -> Result<NormalizedGame> 
     normalize_game(game, white, black, event, site)
 }
 
+/// `pgn` without its leading tag-pair lines. The board sends a whole PGN
+/// (headers, a blank line, movetext); the headers are in `UpdateGame`'s own
+/// fields, and a `[FEN]` among them would end the game's header block early.
+fn without_headers(pgn: &str) -> &str {
+    let mut rest = pgn;
+    while !rest.is_empty() {
+        let (line, tail) = rest.split_once('\n').unwrap_or((rest, ""));
+        let line = line.trim();
+        if !line.is_empty() && !line.starts_with('[') {
+            break;
+        }
+        rest = tail;
+    }
+    rest
+}
+
 /// Saves an edited game. Moves are read from the start position `data.fen`
 /// names, so a game that starts from a FEN keeps its moves; `FEN` stays NULL at
 /// the standard start, as the importer stores it. `data.date` and `data.time`
@@ -180,7 +197,7 @@ pub(super) fn update_game(conn: &mut SqliteConnection, id: i32, data: &UpdateGam
     if start_fen != Fen::default() {
         pgn.push_str(&format!("[FEN \"{}\"]\n\n", start_fen));
     }
-    pgn.push_str(&data.moves);
+    pgn.push_str(without_headers(&data.moves));
 
     let mut reader = BufferedReader::new_cursor(&pgn);
     let mut importer = Importer::new(None);

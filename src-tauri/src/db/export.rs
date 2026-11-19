@@ -6,6 +6,7 @@ use std::{
 
 use diesel::{connection::DefaultLoadingMode, prelude::*};
 use shakmaty::{fen::Fen, CastlingMode, Chess, FromSetup};
+use tauri::Manager;
 
 use crate::{
     db::{
@@ -150,23 +151,23 @@ fn write_games(db: &mut SqliteConnection, writer: &mut impl Write) -> Result<()>
 
 #[tauri::command]
 #[specta::specta]
-pub async fn export_to_pgn(
-    file: PathBuf,
-    dest_file: PathBuf,
-    state: tauri::State<'_, AppState>,
-) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
+pub async fn export_to_pgn(file: PathBuf, dest_file: PathBuf, app: tauri::AppHandle) -> Result<()> {
+    super::maintenance::blocking(move || {
+        let state = app.state::<AppState>();
+        let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
 
-    let file = OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(dest_file)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(dest_file)?;
 
-    let mut writer = BufWriter::new(file);
-    write_games(db, &mut writer)?;
-    writer.flush()?;
-    Ok(())
+        let mut writer = BufWriter::new(file);
+        write_games(db, &mut writer)?;
+        writer.flush()?;
+        Ok(())
+    })
+    .await
 }
 
 #[cfg(test)]

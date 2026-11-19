@@ -18,7 +18,7 @@ use serde::Serialize;
 use shakmaty::{fen::Fen, Board, Chess, Color, FromSetup, Piece, Position, Role};
 use specta::Type;
 use std::{path::PathBuf, time::Instant};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use super::{
     get_db_or_create,
@@ -374,20 +374,22 @@ pub fn reindex_game(conn: &mut SqliteConnection, id: i32) -> Result<()> {
 pub async fn build_position_index(
     file: PathBuf,
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
 ) -> Result<IndexBuildReport> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
-
-    build_index(db, |processed, total| {
-        let _ = app.emit(
-            "position_index_progress",
-            IndexProgress {
-                processed,
-                total,
-                finished: processed >= total,
-            },
-        );
+    super::maintenance::blocking(move || {
+        let state = app.state::<AppState>();
+        let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
+        build_index(db, |processed, total| {
+            let _ = app.emit(
+                "position_index_progress",
+                IndexProgress {
+                    processed,
+                    total,
+                    finished: processed >= total,
+                },
+            );
+        })
     })
+    .await
 }
 
 /// Index every game not yet covered, reporting `(processed, total)` per batch.
