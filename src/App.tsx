@@ -78,7 +78,7 @@ export const loadDirectories = async (): Promise<Dirs> => {
   return directoriesCache;
 };
 
-export const clearDirectoriesCache = () => {
+const clearDirectoriesCache = () => {
   directoriesCache = null;
 };
 

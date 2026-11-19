@@ -32,7 +32,6 @@ import {
 } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
 import { save } from "@tauri-apps/plugin-dialog";
-import { parseUci } from "chessops";
 import { INITIAL_FEN } from "chessops/fen";
 import equal from "fast-deep-equal";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
@@ -51,18 +50,18 @@ import {
 import { useTranslation } from "react-i18next";
 import { match } from "ts-pattern";
 import { useStore } from "zustand";
-import { commands, events, type GoMode, type Outcome } from "@/bindings";
+import { commands, events, type GoMode } from "@/bindings";
 import GameInfo from "@/components/GameInfo";
 import MoveControls from "@/components/MoveControls";
 import EngineSettingsForm from "@/components/panels/analysis/EngineSettingsForm";
 import TimeInput from "@/components/TimeInput";
+import { readTree } from "@/state/tabSession";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import {
   activeTabAtom,
   currentGameStateAtom,
   currentPlayersAtom,
-  type GameState,
   loadableEnginesAtom,
   pendingPlayFenAtom,
   tabsAtom,
@@ -73,24 +72,20 @@ import type { TimeControlField } from "@/utils/clock";
 import { getDocumentDir } from "@/utils/documentDir";
 import { type LocalEngine, syncSelectedEngine } from "@/utils/engines";
 import { createFile } from "@/utils/files";
-import { deserializeStorageValue } from "@/utils/tabStateStorage";
 import { formatDateToPGN } from "@/utils/format";
 import { type GameRecord, saveGameRecord } from "@/utils/gameRecords";
 import { createTab } from "@/utils/tabs";
-import {
-  type GameHeaders,
-  type TreeNode,
-  type TreeState,
-  treeIteratorMainLine,
-} from "@/utils/treeReducer";
+import { type GameHeaders, type TreeNode, treeIteratorMainLine } from "@/utils/treeReducer";
 import {
   buildEngineGameHeaders,
   copyTimeControl,
   engineExtraOptions,
   engineGoMode,
+  engineMoveFromPayload,
   type PlayerSettings,
 } from "../play/engineGame";
 import { buildPlayGamePgn } from "../play/playGamePgn";
+import { useClockTimer } from "../play/useClockTimer";
 import GameNotationWrapper from "./GameNotationWrapper";
 import ResponsiveBoard from "./ResponsiveBoard";
 
@@ -98,8 +93,6 @@ const DEFAULT_TIME_CONTROL: TimeControlField = {
   seconds: 180_000,
   increment: 2_000,
 };
-
-const CLOCK_UPDATE_INTERVAL = 100; // ms
 
 type ColorChoice = "white" | "random" | "black";
 
@@ -397,112 +390,6 @@ function OpponentForm({
   );
 }
 
-function useClockTimer(
-  gameState: string,
-  pos: any,
-  whiteTime: number | null,
-  blackTime: number | null,
-  setWhiteTime: Dispatch<SetStateAction<number | null>>,
-  setBlackTime: Dispatch<SetStateAction<number | null>>,
-  players: any,
-  setGameState: (state: GameState) => void,
-  setResult: (result: Outcome) => void,
-) {
-  const [intervalId, setIntervalId] = useState<ReturnType<typeof setInterval> | null>(null);
-
-  // Track previous turn to detect turn changes
-  const prevTurnRef = useRef<"white" | "black" | null>(null);
-  const incrementAppliedRef = useRef<string>("");
-  const whiteTimeRef = useRef(whiteTime);
-  const blackTimeRef = useRef(blackTime);
-
-  // Keep refs in sync with state
-  useEffect(() => {
-    whiteTimeRef.current = whiteTime;
-    blackTimeRef.current = blackTime;
-  }, [whiteTime, blackTime]);
-
-  // Clear interval and apply increment when turn changes
-  useEffect(() => {
-    if (gameState === "playing" && pos?.turn) {
-      const currentTurn = pos.turn;
-      const prevTurn = prevTurnRef.current;
-      const turnKey = `${prevTurn}-${currentTurn}-${pos.fullmoves}`;
-
-      // If turn changed, clear interval and apply increment
-      if (
-        prevTurn !== null &&
-        prevTurn !== currentTurn &&
-        incrementAppliedRef.current !== turnKey
-      ) {
-        // Clear existing interval
-        if (intervalId) {
-          clearInterval(intervalId);
-          setIntervalId(null);
-        }
-
-        // Apply increment to the player who just moved (previous turn)
-        // Use refs to avoid dependency on whiteTime/blackTime
-        if (prevTurn === "white" && whiteTimeRef.current !== null && pos.fullmoves > 1) {
-          setWhiteTime((prev) => (prev ?? 0) + (players.white.timeControl?.increment ?? 0));
-        } else if (prevTurn === "black" && blackTimeRef.current !== null) {
-          setBlackTime((prev) => (prev ?? 0) + (players.black.timeControl?.increment ?? 0));
-        }
-
-        incrementAppliedRef.current = turnKey;
-      }
-
-      // Update previous turn
-      prevTurnRef.current = currentTurn;
-    }
-  }, [gameState, pos?.turn, pos?.fullmoves, intervalId, players, setWhiteTime, setBlackTime]);
-
-  useEffect(() => {
-    if (gameState === "playing") {
-      if (whiteTime !== null && whiteTime <= 0) {
-        setGameState("gameOver");
-        setResult("0-1");
-      } else if (blackTime !== null && blackTime <= 0) {
-        setGameState("gameOver");
-        setResult("1-0");
-      }
-    }
-  }, [gameState, whiteTime, blackTime, setGameState, setResult]);
-
-  useEffect(() => {
-    if (gameState !== "playing" && intervalId) {
-      clearInterval(intervalId);
-      setIntervalId(null);
-    }
-  }, [gameState, intervalId]);
-
-  // Start timer for current turn
-  useEffect(
-    () => {
-      if (gameState === "playing" && pos && !intervalId) {
-        const decrementTime = () => {
-          if (pos.turn === "white" && whiteTime !== null) {
-            setWhiteTime((prev) => {
-              const current = prev ?? 0;
-              return current > 0 ? current - CLOCK_UPDATE_INTERVAL : 0;
-            });
-          } else if (pos.turn === "black" && blackTime !== null) {
-            setBlackTime((prev) => {
-              const current = prev ?? 0;
-              return current > 0 ? current - CLOCK_UPDATE_INTERVAL : 0;
-            });
-          }
-        };
-
-        const id = setInterval(decrementTime, CLOCK_UPDATE_INTERVAL);
-        setIntervalId(id);
-      }
-    },
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- whiteTime/blackTime only feed a null check; adding them would re-run the effect on every clock tick
-    [gameState, intervalId, pos?.turn, setWhiteTime, setBlackTime, pos],
-  );
-}
-
 function BoardGame() {
   const activeTab = useAtomValue(activeTabAtom);
   const { t } = useTranslation();
@@ -772,6 +659,7 @@ function BoardGame() {
               moves: moves,
               extraOptions: engineExtraOptions(player),
             },
+            activeTab,
           )
           .catch(() => {
             // Clear the ref on error so we can retry
@@ -788,16 +676,14 @@ function BoardGame() {
     }
   }, [gameState, pos, players, headers.result, activeTab, root.fen, moves, whiteTime, blackTime]);
 
-  // Store current moves and root.fen in refs to avoid recreating listener
-  const movesRef = useRef<string[]>(moves);
-  const rootFenRef = useRef<string>(root.fen);
-  useEffect(() => {
-    movesRef.current = moves;
-    rootFenRef.current = root.fen;
-  }, [moves, root.fen]);
+  // The listener subscribes once and reads the latest game through this ref, so a clock tick
+  // or a move never leaves a gap in which the engine's final event is dropped.
+  const gameRef = useRef({ gameState, activeTab, pos, root, moves, whiteTime, blackTime });
+  gameRef.current = { gameState, activeTab, pos, root, moves, whiteTime, blackTime };
 
   useEffect(() => {
     const unlisten = events.bestMovesPayload.listen(({ payload }) => {
+      const { gameState, activeTab, pos, root, moves, whiteTime, blackTime } = gameRef.current;
       // Only process moves when game is actively playing
       if (gameState !== "playing" || !activeTab || !pos) {
         return;
@@ -809,22 +695,19 @@ function BoardGame() {
         engineRequestRef.current = null;
       }
 
-      const ev = payload.bestLines;
-      // CRITICAL: The payload.fen is the INITIAL FEN (root.fen) that was sent to getBestMoves
-      // The backend sends proc.options.fen which is root.fen, not the final FEN after moves
-      // So we must compare with root.fen, not lastNode.fen
-      // The moves array in the payload should match the current moves array
-      // Using refs to avoid recreating the listener on every change
+      // payload.fen is the root FEN sent to getBestMoves, not the FEN after the moves, and
+      // payload.moves must equal the game's moves.
+      const move = engineMoveFromPayload(payload);
       if (
-        payload.progress === 100 &&
+        move &&
         payload.engine === pos.turn &&
         payload.tab === activeTab + pos.turn &&
-        payload.fen === rootFenRef.current && // Backend sends root.fen in payload, not final FEN
-        equal(payload.moves, movesRef.current) && // Use ref to avoid listener recreation
+        payload.fen === root.fen &&
+        equal(payload.moves, moves) &&
         !pos.isEnd()
       ) {
         appendMove({
-          payload: parseUci(ev[0].uciMoves[0])!,
+          payload: move,
           clock: (pos.turn === "white" ? whiteTime : blackTime) ?? undefined,
         });
       }
@@ -832,7 +715,7 @@ function BoardGame() {
     return () => {
       unlisten.then((f) => f());
     };
-  }, [gameState, activeTab, appendMove, pos, whiteTime, blackTime]);
+  }, [appendMove]);
 
   const movable = useMemo(() => {
     if (players.white.type === "human" && players.black.type === "human") return "turn";
@@ -1178,71 +1061,64 @@ function BoardGame() {
       setActiveTab(currentActiveTab);
 
       // Get the PGN and FEN initial from the newly created tab
-      // The tab stores its state in sessionStorage with the tab ID
+      // Read the stored tree of the new tab; none when the tab was not opened
       try {
-        const tabStateJson = sessionStorage.getItem(newTabId);
-        if (tabStateJson) {
-          const tabState = deserializeStorageValue<{ version: number; state: TreeState }>(
-            tabStateJson,
-          );
-          if (tabState?.state) {
-            const treeState = tabState.state;
+        const treeState = newTabId === null ? null : readTree(newTabId);
+        if (treeState) {
+          // Get PGN from the tree state using getPGN
+          const tabPgn = getPGN(treeState.root, {
+            headers: treeState.headers,
+            comments: true,
+            extraMarkups: true,
+            glyphs: true,
+            variations: true,
+          });
 
-            // Get PGN from the tree state using getPGN
-            const tabPgn = getPGN(treeState.root, {
-              headers: treeState.headers,
-              comments: true,
-              extraMarkups: true,
-              glyphs: true,
-              variations: true,
-            });
+          // Get initial FEN from the tree state root
+          const tabInitialFen = treeState.root?.fen || treeState.headers?.fen;
 
-            // Get initial FEN from the tree state root
-            const tabInitialFen = treeState.root?.fen || treeState.headers?.fen;
+          // Get the last node for final FEN
+          const mainLine = Array.from(treeIteratorMainLine(treeState.root));
+          const lastNode = mainLine[mainLine.length - 1].node;
 
-            // Get the last node for final FEN
-            const mainLine = Array.from(treeIteratorMainLine(treeState.root));
-            const lastNode = mainLine[mainLine.length - 1].node;
+          // Get UCI moves for the moves array (for backward compatibility)
+          const uciMoves = getMainLine(treeState.root, treeState.headers?.variant === "Chess960");
 
-            // Get UCI moves for the moves array (for backward compatibility)
-            const uciMoves = getMainLine(treeState.root, treeState.headers?.variant === "Chess960");
+          // Use current result or "*" if game was stopped early
+          const gameResult =
+            treeState.headers?.result && treeState.headers.result !== "*"
+              ? treeState.headers.result
+              : "*";
 
-            // Use current result or "*" if game was stopped early
-            const gameResult =
-              treeState.headers?.result && treeState.headers.result !== "*"
-                ? treeState.headers.result
-                : "*";
+          // Save the game record with PGN and initial FEN from the tab
+          const record: GameRecord = {
+            id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            white: {
+              type: players.white.type,
+              name:
+                players.white.type === "human" ? players.white.name : players.white.engine?.name,
+              engine: players.white.type === "engine" ? players.white.engine?.path : undefined,
+            },
+            black: {
+              type: players.black.type,
+              name:
+                players.black.type === "human" ? players.black.name : players.black.engine?.name,
+              engine: players.black.type === "engine" ? players.black.engine?.path : undefined,
+            },
+            result: gameResult,
+            timeControl:
+              treeState.headers?.time_control ||
+              `${treeState.headers?.white_time_control || ""},${treeState.headers?.black_time_control || ""}`,
+            timestamp: Date.now(),
+            moves: uciMoves, // UCI moves for backward compatibility
+            variant: treeState.headers?.variant ?? undefined,
+            fen: lastNode.fen, // Final FEN position
+            initialFen: tabInitialFen !== INITIAL_FEN ? tabInitialFen : undefined, // Initial FEN from tab
+            pgn: tabPgn, // Full PGN from tab
+          };
 
-            // Save the game record with PGN and initial FEN from the tab
-            const record: GameRecord = {
-              id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-              white: {
-                type: players.white.type,
-                name:
-                  players.white.type === "human" ? players.white.name : players.white.engine?.name,
-                engine: players.white.type === "engine" ? players.white.engine?.path : undefined,
-              },
-              black: {
-                type: players.black.type,
-                name:
-                  players.black.type === "human" ? players.black.name : players.black.engine?.name,
-                engine: players.black.type === "engine" ? players.black.engine?.path : undefined,
-              },
-              result: gameResult,
-              timeControl:
-                treeState.headers?.time_control ||
-                `${treeState.headers?.white_time_control || ""},${treeState.headers?.black_time_control || ""}`,
-              timestamp: Date.now(),
-              moves: uciMoves, // UCI moves for backward compatibility
-              variant: treeState.headers?.variant ?? undefined,
-              fen: lastNode.fen, // Final FEN position
-              initialFen: tabInitialFen !== INITIAL_FEN ? tabInitialFen : undefined, // Initial FEN from tab
-              pgn: tabPgn, // Full PGN from tab
-            };
-
-            // Save the game record
-            await saveGameRecord(record);
-          }
+          // Save the game record
+          await saveGameRecord(record);
         }
       } catch {
         // Failed to get data from tab, skip saving

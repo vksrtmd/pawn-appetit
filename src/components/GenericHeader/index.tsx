@@ -12,7 +12,7 @@ import { useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import OpenFolderButton from "../OpenFolderButton";
 
-export type SortOption = {
+type SortOption = {
   value: string;
   label: string;
 };

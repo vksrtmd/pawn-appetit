@@ -38,7 +38,8 @@ import {
 } from "@/utils/gameRecords";
 import { fetchLastLichessGames } from "@/utils/lichess/api";
 import { getPuzzleStats, getTodayPuzzleCount } from "@/utils/puzzleStreak";
-import { createTab, genID, type Tab } from "@/utils/tabs";
+import { genID, type Tab } from "@/utils/tabSchema";
+import { createTab } from "@/utils/tabs";
 import type { TreeState } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
 import { AnalyzeAllModal } from "./components/AnalyzeAllModal";
@@ -48,6 +49,7 @@ import { PuzzleStatsCard } from "./components/PuzzleStatsCard";
 import { QuickActionsGrid } from "./components/QuickActionsGrid";
 import { type Suggestion, SuggestionsCard } from "./components/SuggestionsCard";
 import { UserProfileCard } from "./components/UserProfileCard";
+import { setSideKey } from "@/state/tabSession";
 import { WelcomeCard } from "./components/WelcomeCard";
 import { getChessTitle } from "./utils/chessTitle";
 import {
@@ -718,9 +720,9 @@ export default function DashboardPage() {
                 pgn,
                 headers,
               }).then((tabId) => {
-                // Store the gameId in sessionStorage so we can update it when analysis completes
-                if (tabId && typeof window !== "undefined") {
-                  sessionStorage.setItem(`${tabId}_localGameId`, game.id);
+                // Store the gameId with the tab so we can update it when analysis completes
+                if (tabId) {
+                  setSideKey(tabId, "localGameId", game.id);
                 }
               });
               navigate({ to: "/boards" });
@@ -738,9 +740,9 @@ export default function DashboardPage() {
                   pgn: game.pgn,
                   headers,
                 }).then((tabId) => {
-                  // Store the game URL in sessionStorage so we can save the analyzed PGN when analysis completes
-                  if (tabId && typeof window !== "undefined") {
-                    sessionStorage.setItem(`${tabId}_chessComGameUrl`, game.url);
+                  // Store the game URL with the tab so we can save the analyzed PGN when analysis completes
+                  if (tabId) {
+                    setSideKey(tabId, "chessComGameUrl", game.url);
                   }
                 });
                 navigate({ to: "/boards" });
@@ -759,9 +761,9 @@ export default function DashboardPage() {
                   pgn: game.pgn,
                   headers,
                 }).then((tabId) => {
-                  // Store the game ID in sessionStorage so we can save the analyzed PGN when analysis completes
-                  if (tabId && typeof window !== "undefined") {
-                    sessionStorage.setItem(`${tabId}_lichessGameId`, game.id);
+                  // Store the game ID with the tab so we can save the analyzed PGN when analysis completes
+                  if (tabId) {
+                    setSideKey(tabId, "lichessGameId", game.id);
                   }
                 });
                 navigate({ to: "/boards" });
@@ -957,6 +959,7 @@ export default function DashboardPage() {
                   moves,
                 },
                 engineSettings,
+                null,
               );
 
               // Check again if cancelled after analysis

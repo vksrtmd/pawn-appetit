@@ -2,7 +2,7 @@
  * Color utility functions for theme management
  */
 
-export interface HSL {
+interface HSL {
     h: number;
     s: number;
     l: number;
@@ -11,7 +11,7 @@ export interface HSL {
 /**
  * Convert hex color to HSL
  */
-export function hexToHsl(hex: string): HSL {
+function hexToHsl(hex: string): HSL {
     // Remove the hash if present
     hex = hex.replace(/^#/, "");
 
@@ -54,7 +54,7 @@ export function hexToHsl(hex: string): HSL {
 /**
  * Convert HSL to hex color
  */
-export function hslToHex(h: number, s: number, l: number): string {
+function hslToHex(h: number, s: number, l: number): string {
     h = h / 360;
     s = s / 100;
     l = l / 100;
@@ -111,120 +111,4 @@ export function generateColorShades(baseColor: string): string[] {
 
         return hslToHex(hsl.h, adjustedSaturation, lightness);
     });
-}
-
-/**
- * Calculate the relative luminance of a color
- */
-export function getLuminance(hex: string): number {
-    const rgb = hexToRgb(hex);
-    if (!rgb) return 0;
-
-    const { r, g, b } = rgb;
-    const [rs, gs, bs] = [r, g, b].map((c) => {
-        c = c / 255;
-        return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-    });
-
-    return 0.2126 * rs + 0.7152 * gs + 0.0722 * bs;
-}
-
-/**
- * Convert hex to RGB
- */
-export function hexToRgb(hex: string): { r: number; g: number; b: number } | null {
-    const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-    return result
-        ? {
-              r: parseInt(result[1], 16),
-              g: parseInt(result[2], 16),
-              b: parseInt(result[3], 16),
-          }
-        : null;
-}
-
-/**
- * Calculate contrast ratio between two colors
- */
-export function getContrastRatio(color1: string, color2: string): number {
-    const l1 = getLuminance(color1);
-    const l2 = getLuminance(color2);
-
-    const lighter = Math.max(l1, l2);
-    const darker = Math.min(l1, l2);
-
-    return (lighter + 0.05) / (darker + 0.05);
-}
-
-/**
- * Check if a color combination meets WCAG accessibility standards
- */
-export function isAccessible(
-    backgroundColor: string,
-    textColor: string,
-    level: "AA" | "AAA" = "AA",
-): boolean {
-    const contrast = getContrastRatio(backgroundColor, textColor);
-    const threshold = level === "AAA" ? 7 : 4.5;
-    return contrast >= threshold;
-}
-
-/**
- * Generate accessible text color for a given background
- */
-export function getAccessibleTextColor(
-    backgroundColor: string,
-    lightColor = "#ffffff",
-    darkColor = "#000000",
-): string {
-    const lightContrast = getContrastRatio(backgroundColor, lightColor);
-    const darkContrast = getContrastRatio(backgroundColor, darkColor);
-
-    return lightContrast > darkContrast ? lightColor : darkColor;
-}
-
-/**
- * Darken a color by a percentage
- */
-export function darken(hex: string, percent: number): string {
-    const hsl = hexToHsl(hex);
-    const newLightness = Math.max(0, hsl.l - percent);
-    return hslToHex(hsl.h, hsl.s, newLightness);
-}
-
-/**
- * Lighten a color by a percentage
- */
-export function lighten(hex: string, percent: number): string {
-    const hsl = hexToHsl(hex);
-    const newLightness = Math.min(100, hsl.l + percent);
-    return hslToHex(hsl.h, hsl.s, newLightness);
-}
-
-/**
- * Create a harmonious color palette based on color theory
- */
-export function generateHarmoniousColors(baseColor: string): {
-    complementary: string;
-    triadic: [string, string];
-    analogous: [string, string];
-    splitComplementary: [string, string];
-} {
-    const hsl = hexToHsl(baseColor);
-
-    return {
-        complementary: hslToHex((hsl.h + 180) % 360, hsl.s, hsl.l),
-        triadic: [
-            hslToHex((hsl.h + 120) % 360, hsl.s, hsl.l),
-            hslToHex((hsl.h + 240) % 360, hsl.s, hsl.l),
-        ],
-        analogous: [
-            hslToHex((hsl.h + 30) % 360, hsl.s, hsl.l),
-            hslToHex((hsl.h - 30 + 360) % 360, hsl.s, hsl.l),
-        ],
-        splitComplementary: [
-            hslToHex((hsl.h + 150) % 360, hsl.s, hsl.l),
-            hslToHex((hsl.h + 210) % 360, hsl.s, hsl.l),
-        ],
-    };
 }

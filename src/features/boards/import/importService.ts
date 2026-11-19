@@ -7,11 +7,12 @@ import type { FileType } from "@/features/files/utils/file";
 import { parsePGN } from "@/utils/chess";
 import { getChesscomGame } from "@/utils/chess.com/api";
 import { chessopsError } from "@/utils/chessops";
+import { notifyPgnParseError } from "@/utils/pgnParseError";
 import { createFile, createTempImportFile, openFile } from "@/utils/files";
 import { getLichessGame } from "@/utils/lichess/api";
 import { parseMultiplePgnGames } from "@/utils/pgnUtils";
-import { serializeStorageValue } from "@/utils/tabStateStorage";
-import type { Tab } from "@/utils/tabs";
+import { open } from "@/state/tabSession";
+import type { Tab } from "@/utils/tabSchema";
 import { defaultTree, getGameName, type TreeState } from "@/utils/treeReducer";
 
 export type ImportSource = "PGN" | "Link" | "FEN";
@@ -310,9 +311,12 @@ async function importLinkGame(
         };
     }
 
-    const tree = await parsePGN(pgn);
+    const tree = await parsePGN(pgn).catch((e) => {
+        notifyPgnParseError(e);
+        throw e;
+    });
     context.setCurrentTab((prev) => {
-        sessionStorage.setItem(prev.value, serializeStorageValue({ version: 0, state: tree }));
+        open(prev.value, tree);
         return {
             ...prev,
             name: getGameName(tree.headers),
@@ -346,7 +350,7 @@ function importFenPosition(
     context.setCurrentTab((prev) => {
         const tree = defaultTree(parsedFen);
         tree.headers.fen = parsedFen;
-        sessionStorage.setItem(prev.value, serializeStorageValue({ version: 0, state: tree }));
+        open(prev.value, tree);
         return {
             ...prev,
             name: request.analysisTitle,

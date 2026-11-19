@@ -4,7 +4,7 @@ import { IconChartLine, IconFileImport, IconPlayerPlay, IconPuzzle } from "@tabl
 import { useAtom } from "jotai";
 import { useTranslation } from "react-i18next";
 import { tabsAtom } from "@/state/atoms";
-import type { Tab } from "@/utils/tabs";
+import type { Tab } from "@/utils/tabSchema";
 
 export default function NewTabHome({ id }: { id: string }) {
   const { t } = useTranslation();

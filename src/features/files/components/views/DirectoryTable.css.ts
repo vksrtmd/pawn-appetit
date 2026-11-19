@@ -17,10 +17,6 @@ export const expandIconRotated = style({
     transform: "rotate(90deg)",
 });
 
-export const table = style({
-    padding: 0,
-});
-
 export const selected = style({
     [vars.lightSelector]: {
         backgroundColor: vars.colors.gray[0],

@@ -18,14 +18,13 @@ use serde::Serialize;
 use shakmaty::{fen::Fen, Board, Chess, Color, FromSetup, Piece, Position, Role};
 use specta::Type;
 use std::{path::PathBuf, time::Instant};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 
 use super::{
     get_db_or_create,
     models::NewGameIndex,
     schema::{game_index, games, info},
     search::MoveStream,
-    ConnectionOptions,
 };
 use crate::{error::Result, AppState};
 
@@ -121,7 +120,8 @@ impl PieceMasks {
     ///
     /// # Errors
     ///
-    /// Returns an error if `fen` is present but not a legal position.
+    /// Returns an error if `fen` is present but not a legal position, or the
+    /// blob is malformed: a game is never indexed with partial masks.
     pub fn from_moves(moves: &[u8], fen: Option<&str>) -> Result<Self> {
         let start = match fen {
             Some(fen) => {
@@ -135,7 +135,7 @@ impl PieceMasks {
         masks.add_position(&start);
 
         let mut stream = MoveStream::new(moves, start);
-        while stream.advance() {
+        while stream.advance()? {
             masks.add_position(stream.position());
         }
 
@@ -346,6 +346,24 @@ fn write_info_i32(conn: &mut SqliteConnection, key: &str, value: i32) -> Result<
     Ok(())
 }
 
+/// Recomputes the index row of one edited game, so position search still
+/// finds it. A game past the index's coverage is left for the next build, and
+/// so is a database with no usable index.
+pub fn reindex_game(conn: &mut SqliteConnection, id: i32) -> Result<()> {
+    if id > indexed_up_to(conn) {
+        return Ok(());
+    }
+    let (moves, fen): (Vec<u8>, Option<String>) = games::table
+        .filter(games::id.eq(id))
+        .select((games::moves, games::fen))
+        .first(conn)?;
+    let masks = PieceMasks::from_moves(&moves, fen.as_deref())?;
+    diesel::replace_into(game_index::table)
+        .values(NewGameIndex::new(id, masks.to_signed()))
+        .execute(conn)?;
+    Ok(())
+}
+
 /// Build (or resume building) the piece-square index for a database.
 ///
 /// The build is incremental: it starts from the highest game already covered,
@@ -356,20 +374,22 @@ fn write_info_i32(conn: &mut SqliteConnection, key: &str, value: i32) -> Result<
 pub async fn build_position_index(
     file: PathBuf,
     app: tauri::AppHandle,
-    state: tauri::State<'_, AppState>,
 ) -> Result<IndexBuildReport> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
-
-    build_index(db, |processed, total| {
-        let _ = app.emit(
-            "position_index_progress",
-            IndexProgress {
-                processed,
-                total,
-                finished: processed >= total,
-            },
-        );
+    super::maintenance::blocking(move || {
+        let state = app.state::<AppState>();
+        let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
+        build_index(db, |processed, total| {
+            let _ = app.emit(
+                "position_index_progress",
+                IndexProgress {
+                    processed,
+                    total,
+                    finished: processed >= total,
+                },
+            );
+        })
     })
+    .await
 }
 
 /// Index every game not yet covered, reporting `(processed, total)` per batch.
@@ -462,7 +482,7 @@ pub fn build_index(
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_position_index(file: PathBuf, state: tauri::State<'_, AppState>) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
 
     ensure_table(db)?;
     diesel::delete(game_index::table).execute(db)?;
@@ -531,11 +551,7 @@ mod tests {
         assert_eq!(knights & square_bit(Square::E4), 0);
     }
 
-    /// Encoded-blob markers, mirrored from `MoveStream`.
-    const START_VARIATION: u8 = 254;
-    const END_VARIATION: u8 = 253;
-    const COMMENT: u8 = 252;
-    const NAG: u8 = 251;
+    use crate::db::move_blob::{COMMENT, END_VARIATION, NAG, START_VARIATION};
 
     /// Encode `san` as a move byte, playing it on `position`.
     fn push_move(blob: &mut Vec<u8>, position: &mut Chess, san: &str) {
@@ -560,8 +576,17 @@ mod tests {
 
         // A variation is an alternative to the move just played; its contents
         // are skipped wholesale, so any legal byte sequence exercises the path.
+        // This one nests another and holds a NAG and a comment that contain
+        // marker bytes, which a byte-scanning skip would stop at.
         blob.push(START_VARIATION);
         blob.push(0);
+        blob.extend([NAG, END_VARIATION]);
+        blob.push(START_VARIATION);
+        blob.push(1);
+        blob.push(END_VARIATION);
+        blob.push(COMMENT);
+        blob.extend(1u64.to_be_bytes());
+        blob.push(END_VARIATION);
         blob.push(END_VARIATION);
 
         push_move(&mut blob, &mut position, "e5");
@@ -589,8 +614,11 @@ mod tests {
 
         let mut visited = 0;
         loop {
-            let expected = reference.next_move().map(|_| reference.position().clone());
-            let advanced = cheap.advance();
+            let expected = reference
+                .next_move()
+                .unwrap()
+                .map(|_| reference.position().clone());
+            let advanced = cheap.advance().unwrap();
 
             match expected {
                 Some(expected) => {
@@ -606,6 +634,65 @@ mod tests {
         }
 
         assert_eq!(visited, 4, "expected the four main-line moves");
+    }
+
+    fn malformed_blobs() -> Vec<Vec<u8>> {
+        let mut past_end = vec![12, COMMENT];
+        past_end.extend(100u64.to_be_bytes());
+        let mut huge = vec![12, COMMENT];
+        huge.extend(u64::MAX.to_be_bytes());
+        vec![vec![12, NAG], past_end, huge, vec![12, 200]]
+    }
+
+    #[test]
+    fn malformed_blobs_are_not_indexed_with_partial_masks() {
+        for blob in malformed_blobs() {
+            assert!(PieceMasks::from_moves(&blob, None).is_err(), "{blob:?}");
+            let mut stream = MoveStream::new(&blob, Chess::default());
+            assert!(stream.advance().unwrap(), "first move is valid");
+            assert!(stream.advance().is_err(), "{blob:?}");
+        }
+    }
+
+    #[test]
+    fn index_build_counts_malformed_blobs_as_skipped() {
+        use crate::db::{models::NewGame, schema::games};
+        use diesel::Connection;
+        let mut db = SqliteConnection::establish(":memory:").unwrap();
+        crate::db::core::init_db(&mut db, "Test", "Test").unwrap();
+        // The rows only need a move blob; skip the player/event/site rows.
+        diesel::sql_query("PRAGMA foreign_keys = OFF")
+            .execute(&mut db)
+            .unwrap();
+        for blob in malformed_blobs() {
+            diesel::insert_into(games::table)
+                .values(NewGame {
+                    event_id: 1,
+                    site_id: 1,
+                    date: None,
+                    time: None,
+                    end_date: None,
+                    end_time: None,
+                    round: None,
+                    white_id: 1,
+                    white_elo: None,
+                    black_id: 1,
+                    black_elo: None,
+                    white_material: 0,
+                    black_material: 0,
+                    result: None,
+                    time_control: None,
+                    eco: None,
+                    ply_count: 0,
+                    fen: None,
+                    moves: &blob,
+                    pawn_home: 0,
+                })
+                .execute(&mut db)
+                .unwrap();
+        }
+        let report = build_index(&mut db, |_, _| {}).unwrap();
+        assert_eq!((report.indexed, report.skipped), (0, 4));
     }
 
     #[test]
@@ -708,7 +795,7 @@ mod tests {
                 let mut masks = PieceMasks::default();
                 let mut plies = 0i64;
                 masks.add_position(stream.position());
-                while stream.advance() {
+                while stream.advance().unwrap() {
                     masks.add_position(stream.position());
                     plies += 1;
                 }

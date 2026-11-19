@@ -25,9 +25,13 @@ export interface TreeNode {
     annotations: Annotation[];
     comment: string;
     clock?: number;
+    /** Marks Game Review added to this node, so a later review removes only these. */
+    reviewAnnotations?: Annotation[];
+    /** Set on the first move of a line Game Review added. */
+    reviewLine?: boolean;
 }
 
-export interface ReportState {
+interface ReportState {
     progress: number;
     isCompleted: boolean;
     inProgress: boolean;

@@ -1,10 +1,19 @@
+use std::{fs::File, io::Read, path::Path};
+
 use chrono::{NaiveDate, NaiveTime};
 use diesel::{prelude::*, SqliteConnection};
+use pgn_reader::BufferedReader;
 use shakmaty::{Board, Piece, Position};
 
 use crate::{
-    db::{core, models::NewGame, ops::*, pgn::TempGame, schema::games},
-    error::Result,
+    db::{
+        core,
+        models::NewGame,
+        ops::*,
+        pgn::{Importer, TempGame},
+        schema::games,
+    },
+    error::{Error, Result},
 };
 
 const WHITE_PAWN: Piece = Piece {
@@ -43,6 +52,44 @@ fn find_stored_game(
         .first(db)
         .optional()?;
     Ok(found)
+}
+
+/// Reads every game of a PGN file (plain, `.bz2` or `.zst`) into `db`.
+///
+/// A read or decode error (a truncated archive, a broken stream) is returned
+/// rather than ending the import quietly with games missing. `on_progress`
+/// receives the games read so far, once per thousand.
+pub fn import_file(
+    db: &mut SqliteConnection,
+    path: &Path,
+    timestamp: Option<i64>,
+    mut on_progress: impl FnMut(usize),
+) -> Result<()> {
+    let extension = path.extension();
+    let file = File::open(path)?;
+    let uncompressed: Box<dyn Read + Send> = if extension == Some("bz2".as_ref()) {
+        Box::new(bzip2::read::MultiBzDecoder::new(file))
+    } else if extension == Some("zst".as_ref()) {
+        Box::new(zstd::Decoder::new(file)?)
+    } else {
+        Box::new(file)
+    };
+
+    let mut importer = Importer::new(timestamp);
+    for (i, game) in BufferedReader::new(uncompressed)
+        .into_iter(&mut importer)
+        .enumerate()
+    {
+        let Some(game) = game.map_err(|e| Error::ImportRead(format!("{}: {e}", path.display())))?
+        else {
+            continue;
+        };
+        if i % 1000 == 0 {
+            on_progress(i);
+        }
+        insert_to_db(db, &game)?;
+    }
+    Ok(())
 }
 
 pub fn insert_to_db(db: &mut SqliteConnection, game: &TempGame) -> Result<()> {
@@ -135,8 +182,6 @@ pub fn insert_to_db(db: &mut SqliteConnection, game: &TempGame) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::pgn::Importer;
-    use pgn_reader::BufferedReader;
 
     #[test]
     fn home_row() {
@@ -150,6 +195,61 @@ mod tests {
 
         let pawn_home = get_pawn_home(&Board::from_ascii_board_fen(b"8/8/8/8/8/8/8/8").unwrap());
         assert_eq!(pawn_home, 0b0000000000000000);
+    }
+
+    const THREE_GAMES: &str = "[Date \"2026.09.09\"]\n[UTCTime \"11:05:14\"]\n[White \"a\"]\n[Black \"b\"]\n\n1. e4 e5 *\n\n";
+
+    fn big_pgn() -> Vec<u8> {
+        // Incompressible-ish content so the archive has bytes to cut.
+        let mut out = String::new();
+        for i in 0..3000 {
+            out.push_str(&format!(
+                "[Date \"2026.09.09\"]\n[UTCTime \"11:{:02}:{:02}\"]\n[White \"p{i}\"]\n[Black \"q{i}\"]\n\n1. e4 e5 *\n\n",
+                (i / 60) % 60,
+                i % 60
+            ));
+        }
+        out.into_bytes()
+    }
+
+    fn import_bytes(name: &str, bytes: &[u8]) -> (Result<()>, i64) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(name);
+        std::fs::write(&path, bytes).unwrap();
+        let mut conn = SqliteConnection::establish(":memory:").unwrap();
+        core::init_db(&mut conn, "Test", "Test").unwrap();
+        let result = import_file(&mut conn, &path, None, |_| {});
+        (result, game_count(&mut conn))
+    }
+
+    #[test]
+    fn a_truncated_bz2_file_is_an_error() {
+        use std::io::Write;
+        let mut enc = bzip2::write::BzEncoder::new(Vec::new(), bzip2::Compression::fast());
+        enc.write_all(&big_pgn()).unwrap();
+        let bytes = enc.finish().unwrap();
+        let (whole, n) = import_bytes("a.pgn.bz2", &bytes);
+        whole.unwrap();
+        assert_eq!(n, 3000);
+        let (cut, _) = import_bytes("a.pgn.bz2", &bytes[..bytes.len() / 2]);
+        assert!(cut.is_err());
+    }
+
+    #[test]
+    fn a_truncated_zst_file_is_an_error() {
+        let bytes = zstd::encode_all(&big_pgn()[..], 1).unwrap();
+        let (whole, n) = import_bytes("a.pgn.zst", &bytes);
+        whole.unwrap();
+        assert_eq!(n, 3000);
+        let (cut, _) = import_bytes("a.pgn.zst", &bytes[..bytes.len() / 2]);
+        assert!(cut.is_err());
+    }
+
+    #[test]
+    fn a_plain_pgn_file_imports() {
+        let (result, n) = import_bytes("a.pgn", THREE_GAMES.as_bytes());
+        result.unwrap();
+        assert_eq!(n, 1);
     }
 
     fn insert_pgn(conn: &mut SqliteConnection, pgn: &str) {

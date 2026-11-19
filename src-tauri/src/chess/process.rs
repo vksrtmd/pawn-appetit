@@ -3,21 +3,61 @@
 //! This module provides the `EngineProcess` struct for managing a UCI chess engine process,
 //! sending commands, updating options, and parsing engine output for best-move analysis.
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use tokio::io::AsyncWriteExt;
 use vampirc_uci::{uci::ScoreValue, UciInfoAttribute};
 
 use crate::error::Error;
 
-use super::session::EngineLifecycle;
+use super::session::{EngineLifecycle, EngineSessionState};
 use super::types::{BestMoves, EngineLog, EngineOptions, GoMode};
-use super::uci::UciCommunicator;
+use super::uci::{UciCommunicator, UCI_TIMEOUT};
 use shakmaty::{fen::Fen, san::SanPlus, uci::UciMove, CastlingMode, Chess, Color, Position};
 
 #[cfg(target_os = "windows")]
 pub const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+/// Most recent engine log lines kept per process.
+pub const MAX_LOG_LINES: usize = 2000;
+
+/// An engine's log: the most recent [`MAX_LOG_LINES`] lines.
+#[derive(Default)]
+pub struct LogBuffer(VecDeque<EngineLog>);
+
+impl LogBuffer {
+    pub fn push(&mut self, line: EngineLog) {
+        if self.0.len() == MAX_LOG_LINES {
+            self.0.pop_front();
+        }
+        self.0.push_back(line);
+    }
+
+    pub fn to_vec(&self) -> Vec<EngineLog> {
+        self.0.iter().cloned().collect()
+    }
+}
+
+/// What one engine output line meant to the search in progress.
+pub enum LineEvent {
+    /// Every `MultiPV` line of a depth arrived. `lines` are the best lines of that depth;
+    /// `progress` is 0-100 for the current go mode.
+    Depth {
+        progress: f64,
+        lines: Vec<BestMoves>,
+    },
+    /// The engine ended the search with `bestmove`; `lines` are the last complete depth and
+    /// `bestmove` is the move it chose (`None` for `bestmove (none)`). A `bestmove` from a
+    /// search that was stopped is not this: it is `Other`.
+    BestMove {
+        lines: Vec<BestMoves>,
+        bestmove: Option<String>,
+    },
+    /// Anything else (or a partial depth, or one held back by the rate limit).
+    Other,
+}
 
 /// Represents a running UCI engine process and its state.
 pub struct EngineProcess {
@@ -30,9 +70,8 @@ pub struct EngineProcess {
     pub last_progress: f32,
     pub options: EngineOptions,
     pub go_mode: GoMode,
-    pub running: bool,
     pub real_multipv: u16,
-    pub logs: Vec<EngineLog>,
+    pub logs: LogBuffer,
     pub start: Instant,
 }
 
@@ -56,78 +95,18 @@ impl EngineProcess {
         lifecycle.mark_starting();
 
         let mut comm = UciCommunicator::spawn(path).await?;
+        let mut logs = LogBuffer::default();
 
-        let mut logs = Vec::new();
-
-        // Send UCI command with timeout
-        comm.write_line("uci\n").await?;
         logs.push(EngineLog::Gui("uci\n".to_string()));
-
-        // Wait for uciok with timeout (10 seconds)
-        let uci_timeout = tokio::time::Duration::from_secs(10);
-        let uciok_received = tokio::time::timeout(uci_timeout, async {
-            while let Some(line) = comm.stdout_lines.next_line().await? {
-                logs.push(EngineLog::Engine(line.clone()));
-                if line == "uciok" {
-                    return Ok::<_, Error>(true);
-                }
-            }
-            Ok(false)
+        comm.send_and_wait("uci\n", "uciok", UCI_TIMEOUT, |line| {
+            logs.push(EngineLog::Engine(line.to_string()))
         })
-        .await;
-
-        match uciok_received {
-            Ok(Ok(true)) => {
-                // uciok received, proceed with isready
-                comm.write_line("isready\n").await?;
-                logs.push(EngineLog::Gui("isready\n".to_string()));
-
-                // Wait for readyok with timeout (5 seconds)
-                let ready_timeout = tokio::time::Duration::from_secs(5);
-                let readyok_received = tokio::time::timeout(ready_timeout, async {
-                    while let Some(line_is_ready) = comm.stdout_lines.next_line().await? {
-                        logs.push(EngineLog::Engine(line_is_ready.clone()));
-                        if line_is_ready == "readyok" {
-                            return Ok::<_, Error>(true);
-                        }
-                    }
-                    Ok(false)
-                })
-                .await;
-
-                match readyok_received {
-                    Ok(Ok(true)) => {
-                        // Engine initialized successfully
-                    }
-                    Ok(Ok(false)) => {
-                        return Err(Error::EngineInitFailed(
-                            "Engine closed before sending readyok".to_string(),
-                        ));
-                    }
-                    Ok(Err(e)) => {
-                        return Err(e);
-                    }
-                    Err(_) => {
-                        return Err(Error::EngineTimeout(
-                            "Engine did not respond to isready command".to_string(),
-                        ));
-                    }
-                }
-            }
-            Ok(Ok(false)) => {
-                return Err(Error::EngineInitFailed(
-                    "Engine closed before sending uciok".to_string(),
-                ));
-            }
-            Ok(Err(e)) => {
-                return Err(e);
-            }
-            Err(_) => {
-                return Err(Error::EngineTimeout(
-                    "Engine did not respond to uci command".to_string(),
-                ));
-            }
-        }
+        .await?;
+        logs.push(EngineLog::Gui("isready\n".to_string()));
+        comm.send_and_wait("isready\n", "readyok", Duration::from_secs(5), |line| {
+            logs.push(EngineLog::Engine(line.to_string()))
+        })
+        .await?;
 
         lifecycle.mark_ready();
 
@@ -144,7 +123,6 @@ impl EngineProcess {
                 options: EngineOptions::default(),
                 real_multipv: 0,
                 go_mode: GoMode::Infinite,
-                running: false,
                 start: Instant::now(),
             },
             comm.stdout_lines,
@@ -201,6 +179,46 @@ impl EngineProcess {
         Ok(())
     }
 
+    /// The one parser of engine output: log `line`, and when it is an `info` line or `bestmove`
+    /// update the search state and say what happened. `may_emit` is asked once a depth
+    /// completes; when it answers false the depth is cached but reported as `Other`.
+    pub fn handle_line(&mut self, line: &str, may_emit: impl FnOnce() -> bool) -> LineEvent {
+        let event = match vampirc_uci::parse_one(line) {
+            vampirc_uci::UciMessage::Info(attrs) => match self.options.fen.parse::<Fen>() {
+                Ok(fen) => best_moves_from_info(attrs, &fen, &self.options.moves)
+                    .and_then(|best| self.record_info(best, may_emit))
+                    .map_or(LineEvent::Other, |(progress, lines)| LineEvent::Depth {
+                        progress,
+                        lines,
+                    }),
+                Err(e) => {
+                    log::error!(
+                        "Failed to parse FEN in engine output: {} - FEN: {}",
+                        e,
+                        self.options.fen
+                    );
+                    LineEvent::Other
+                }
+            },
+            vampirc_uci::UciMessage::BestMove { best_move, .. } if self.is_searching() => {
+                self.last_progress = 100.0;
+                self.lifecycle.mark_ready();
+                LineEvent::BestMove {
+                    lines: self.last_best_moves.clone(),
+                    bestmove: Some(best_move.to_string()).filter(|m| m != "0000"),
+                }
+            }
+            // The `isready` after `stop`: the stopped search is over, a new one may start.
+            vampirc_uci::UciMessage::ReadyOk if self.lifecycle.is_stopping() => {
+                self.lifecycle.mark_ready();
+                LineEvent::Other
+            }
+            _ => LineEvent::Other,
+        };
+        self.logs.push(EngineLog::Engine(line.to_string()));
+        event
+    }
+
     /// Record one parsed `info` line. When it completes a depth for all `MultiPV` lines, the
     /// cached state (used by the final `bestmove` payload) is always updated; the lines are
     /// returned for emission only when `may_emit` allows (the event rate limit).
@@ -229,6 +247,8 @@ impl EngineProcess {
                 GoMode::Nodes(nodes) => (cur_nodes as f64 / nodes as f64) * 100.0,
                 GoMode::PlayersTime(_) | GoMode::Infinite => 99.99,
             };
+            // Only the final `bestmove` reports 100.
+            let progress = progress.min(99.99);
             self.last_depth = cur_depth;
             self.last_best_moves = self.best_moves.clone();
             self.last_progress = progress as f32;
@@ -264,31 +284,34 @@ impl EngineProcess {
             return Err(e.into());
         }
         self.logs.push(EngineLog::Gui(msg));
-        self.running = true;
         self.start = Instant::now();
         Ok(())
     }
 
-    /// Stop the engine's current search.
+    /// Whether a search is in progress: the one source of truth for "searching".
+    pub fn is_searching(&self) -> bool {
+        self.lifecycle.state == EngineSessionState::Searching
+    }
+
+    /// Stop the engine's current search. The engine is `Stopping` until it answers the
+    /// `isready` sent after `stop` with `readyok` (see [`Self::handle_line`]); the `bestmove`
+    /// of the stopped search arrives before that and is ignored.
     pub async fn stop(&mut self) -> Result<(), Error> {
         if !self.lifecycle.begin_search_stop() {
             return Ok(());
         }
-        if let Err(e) = self.stdin.write_all(b"stop\n").await {
+        if let Err(e) = self.stdin.write_all(b"stop\nisready\n").await {
             self.lifecycle.mark_failed(e.to_string());
             return Err(e.into());
         }
         self.logs.push(EngineLog::Gui("stop\n".to_string()));
-        self.running = false;
-        self.lifecycle.mark_ready();
+        self.logs.push(EngineLog::Gui("isready\n".to_string()));
         Ok(())
     }
 
-    /// Kill the engine process gracefully, with force-kill fallback.
-    ///
-    /// First sends "quit" command and waits up to 2 seconds for graceful shutdown.
-    /// If engine doesn't terminate, forcefully kills the process.
-    pub async fn kill(&mut self) -> Result<(), Error> {
+    /// Shut the engine down: send `quit` and wait up to `grace` for it to exit, then
+    /// force-kill. A zero `grace` skips `quit` and kills at once.
+    pub async fn shutdown(&mut self, grace: Duration) -> Result<(), Error> {
         use log::warn;
 
         if !self.lifecycle.begin_shutdown() {
@@ -296,17 +319,16 @@ impl EngineProcess {
         }
 
         // Try graceful shutdown first
-        if let Err(e) = self.stdin.write_all(b"quit\n").await {
-            warn!("Failed to send quit command to engine: {}", e);
-        } else {
-            self.logs.push(EngineLog::Gui("quit\n".to_string()));
+        if !grace.is_zero() {
+            if let Err(e) = self.stdin.write_all(b"quit\n").await {
+                warn!("Failed to send quit command to engine: {}", e);
+            } else {
+                self.logs.push(EngineLog::Gui("quit\n".to_string()));
+            }
         }
 
-        self.running = false;
-
         // Wait for process to exit gracefully (2 second timeout)
-        let wait_result =
-            tokio::time::timeout(tokio::time::Duration::from_secs(2), self.child.wait()).await;
+        let wait_result = tokio::time::timeout(grace, self.child.wait()).await;
 
         match wait_result {
             Ok(Ok(status)) => {
@@ -544,9 +566,8 @@ mod tests {
             last_progress: 0.0,
             options: EngineOptions::default(),
             go_mode: GoMode::Depth(1),
-            running: true,
             real_multipv: 1,
-            logs: Vec::new(),
+            logs: LogBuffer::default(),
             start: Instant::now(),
         }
     }
@@ -561,7 +582,6 @@ mod tests {
         assert!(emitted.is_none(), "throttled: nothing emitted");
         assert_eq!(proc.last_best_moves.len(), 1);
         assert_eq!(proc.last_best_moves[0].uci_moves, vec!["e2e4"]);
-        assert_eq!(proc.last_progress, 100.0);
     }
 
     #[tokio::test]
@@ -571,7 +591,10 @@ mod tests {
 
         let (progress, lines) = proc.record_info(best, || true).unwrap();
 
-        assert_eq!(progress, 100.0);
+        assert_eq!(
+            progress, 99.99,
+            "the last depth of a depth search is not yet done"
+        );
         assert_eq!(lines.len(), 1);
     }
 
@@ -618,5 +641,41 @@ mod tests {
     #[test]
     fn exact_line_is_a_best_line() {
         assert!(best_moves_from("info depth 5 score cp 30 multipv 1 pv e2e4").is_some());
+    }
+
+    #[test]
+    fn log_keeps_only_the_most_recent_lines() {
+        let mut logs = LogBuffer::default();
+        for i in 0..MAX_LOG_LINES + 500 {
+            logs.push(EngineLog::Engine(i.to_string()));
+        }
+        let kept = logs.to_vec();
+        assert_eq!(kept.len(), MAX_LOG_LINES);
+        assert!(matches!(&kept[0], EngineLog::Engine(l) if l == "500"));
+        assert!(
+            matches!(kept.last(), Some(EngineLog::Engine(l)) if l == &(MAX_LOG_LINES + 499).to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_line_turns_info_and_bestmove_into_events() {
+        let mut proc = test_process();
+        proc.options.fen = START.to_string();
+        proc.lifecycle.start_search();
+
+        let depth = proc.handle_line("info depth 1 score cp 30 multipv 1 pv e2e4", || true);
+        let LineEvent::Depth { lines, .. } = depth else {
+            panic!("expected a depth");
+        };
+        assert_eq!(lines[0].uci_moves, vec!["e2e4"]);
+
+        let done = proc.handle_line("bestmove e2e4", || true);
+        let LineEvent::BestMove { lines, bestmove } = done else {
+            panic!("expected bestmove");
+        };
+        assert_eq!(lines.len(), 1);
+        assert_eq!(bestmove.as_deref(), Some("e2e4"));
+        assert!(!proc.is_searching());
+        assert_eq!(proc.logs.to_vec().len(), 2);
     }
 }

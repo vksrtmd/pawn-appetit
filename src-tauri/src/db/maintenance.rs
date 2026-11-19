@@ -1,110 +1,57 @@
-use std::{fs::remove_file, path::PathBuf, sync::Arc};
-
-use diesel::{connection::SimpleConnection, prelude::*, SqliteConnection};
+use std::path::PathBuf;
 
 use crate::{
-    db::{
-        connection::{get_db_or_create, ConnectionOptions},
-        core,
-        schema::games,
-    },
+    db::{cache::SEARCH_CACHE, connection::get_db_or_create, write},
     error::Result,
     AppState,
 };
 
-const GAMES_DELETE_DUPLICATES: &str =
-    include_str!("../../../database/queries/games/delete_duplicates.sql");
+pub(super) fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> Result<T> + Send + 'static,
+) -> impl std::future::Future<Output = Result<T>> {
+    let handle = tauri::async_runtime::spawn_blocking(work);
+    async move {
+        handle
+            .await
+            .map_err(|e| crate::error::Error::Io(std::io::Error::other(e)))?
+    }
+}
 
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_database(file: PathBuf, state: tauri::State<'_, AppState>) -> Result<()> {
-    let pool = &state.connection_pool;
     let path_str = file.to_str().unwrap();
-    pool.remove(path_str);
+    state.connection_pool.remove(path_str);
 
-    remove_file(path_str)?;
-    Ok(())
+    write::drop_database(&file)
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn delete_duplicated_games(
-    file: PathBuf,
-    state: tauri::State<'_, AppState>,
-) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
-
-    remove_duplicates(db)
-}
-
-fn remove_duplicates(db: &mut SqliteConnection) -> Result<()> {
-    db.batch_execute(GAMES_DELETE_DUPLICATES)?;
-    core::delete_orphaned_data(db)
+pub async fn delete_duplicated_games(file: PathBuf, app: tauri::AppHandle) -> Result<()> {
+    use tauri::Manager;
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let mut db = get_db_or_create(&state, file.to_str().unwrap())?;
+        write::remove_duplicates(&mut db)
+    })
+    .await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub async fn delete_empty_games(file: PathBuf, state: tauri::State<'_, AppState>) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
-
-    remove_empty_games(db)
-}
-
-fn remove_empty_games(db: &mut SqliteConnection) -> Result<()> {
-    diesel::delete(games::table.filter(games::ply_count.eq(0))).execute(db)?;
-    core::delete_orphaned_data(db)
+pub async fn delete_empty_games(file: PathBuf, app: tauri::AppHandle) -> Result<()> {
+    use tauri::Manager;
+    blocking(move || {
+        let state = app.state::<AppState>();
+        let mut db = get_db_or_create(&state, file.to_str().unwrap())?;
+        write::remove_empty_games(&mut db)
+    })
+    .await
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn clear_games(state: tauri::State<'_, AppState>) {
-    let mut state = state.db_cache.lock().unwrap();
-    *state = Arc::new(Vec::new());
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::db::core::{
-        init_db,
-        tests::{info_value, names, seed_game},
-    };
-
-    fn test_db() -> SqliteConnection {
-        let mut conn = SqliteConnection::establish(":memory:").unwrap();
-        init_db(&mut conn, "T", "D").unwrap();
-        conn
-    }
-
-    #[test]
-    fn deleting_duplicates_removes_orphans_and_updates_counts() {
-        let mut conn = test_db();
-        seed_game(&mut conn, "Alice", "Bob", "Open");
-        seed_game(&mut conn, "Alice", "Bob", "Dup");
-        remove_duplicates(&mut conn).unwrap();
-        let (p, e, s) = names(&mut conn);
-        assert_eq!(p, ["Unknown", "Alice", "Bob"]);
-        assert_eq!(e, ["Unknown", "Open"]);
-        assert_eq!(s, ["Unknown", "Open site"]);
-        assert_eq!(info_value(&mut conn, "GameCount").as_deref(), Some("1"));
-        assert_eq!(info_value(&mut conn, "EventCount").as_deref(), Some("2"));
-    }
-
-    #[test]
-    fn deleting_empty_games_removes_orphans_and_updates_counts() {
-        let mut conn = test_db();
-        seed_game(&mut conn, "Alice", "Bob", "Open");
-        let empty = seed_game(&mut conn, "Carol", "Dave", "Cup");
-        diesel::update(games::table.filter(games::id.eq(empty)))
-            .set(games::ply_count.eq(0))
-            .execute(&mut conn)
-            .unwrap();
-        remove_empty_games(&mut conn).unwrap();
-        let (p, e, s) = names(&mut conn);
-        assert_eq!(p, ["Unknown", "Alice", "Bob"]);
-        assert_eq!(e, ["Unknown", "Open"]);
-        assert_eq!(s, ["Unknown", "Open site"]);
-        assert_eq!(info_value(&mut conn, "GameCount").as_deref(), Some("1"));
-        assert_eq!(info_value(&mut conn, "PlayerCount").as_deref(), Some("3"));
-    }
+pub fn clear_games() {
+    SEARCH_CACHE.clear();
 }

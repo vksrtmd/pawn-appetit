@@ -1,15 +1,15 @@
 import { ActionIcon, Badge, Box, Group, Paper, Stack, Text, Tooltip } from "@mantine/core";
-import { modals } from "@mantine/modals";
 import { IconEdit, IconEye, IconTrash } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
-import { remove } from "@tauri-apps/plugin-fs";
 import { useAtom, useSetAtom } from "jotai";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands } from "@/bindings";
 import GameSelector from "@/components/panels/info/GameSelector";
 import GamePreview from "@/features/databases/components/drawers/GamePreview";
-import { invalidateFileIndex } from "@/features/files/utils/file";
+import { confirmDelete } from "@/features/files/components/confirmDelete";
+import { deleteFile } from "@/features/files/utils/fileOps";
+import { dropFileLinks } from "@/utils/tabSources";
 import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { createTab } from "@/utils/tabs";
 import { unwrap } from "@/utils/unwrap";
@@ -55,7 +55,8 @@ function FileCard({
   }, [selected, page]);
 
   async function openGame() {
-    createTab({
+    // createTab resolves null when the game did not parse (the user was told): open nothing
+    const id = await createTab({
       tab: {
         name: selected.name || "Untitled",
         type: "analysis",
@@ -66,32 +67,16 @@ function FileCard({
       srcInfo: selected,
       gameNumber: page,
     });
+    if (id === null) return;
     navigate({ to: "/boards" });
   }
 
   function handleDelete() {
-    modals.openConfirmModal({
-      title: t("features.files.delete.title"),
-      withCloseButton: false,
-      children: (
-        <>
-          <Text>
-            {t("features.files.delete.message", {
-              fileName: selected?.name,
-            })}
-          </Text>
-          <Text>{t("common.cannotUndo")}</Text>
-        </>
-      ),
-      labels: { confirm: t("common.remove"), cancel: t("common.cancel") },
-      confirmProps: { color: "red" },
-      onConfirm: async () => {
-        await remove(selected.path);
-        await remove(selected.path.replace(".pgn", ".info"));
-        invalidateFileIndex();
-        mutate(files?.filter((file) => file.name !== selected.name));
-        setSelected(null);
-      },
+    confirmDelete(t, selected.name, async () => {
+      await deleteFile(selected.path, false);
+      setTabs((tabs) => dropFileLinks(tabs, selected.path));
+      mutate(files?.filter((file) => file.name !== selected.name));
+      setSelected(null);
     });
   }
 

@@ -7,11 +7,15 @@ import { useLoaderData } from "@tanstack/react-router";
 import { save } from "@tauri-apps/plugin-dialog";
 import { writeTextFile } from "@tauri-apps/plugin-fs";
 import { useAtom, useAtomValue, useSetAtom } from "jotai";
-import { useCallback, useContext, useEffect, useRef, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useStore } from "zustand";
 import MoveControls from "@/components/MoveControls";
 import { TreeStateContext } from "@/components/TreeStateContext";
+import {
+  type BoardCommandRegistration,
+  useRegisterBoardCommands,
+} from "@/features/boards/commands/boardCommandRegistry";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import {
   activeTabAtom,
@@ -23,11 +27,13 @@ import {
   tabsAtom,
 } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
+import { save as saveTab } from "@/state/tabSession";
 import { defaultPGN, getMoveText, getPGN } from "@/utils/chess";
 import { positionFromFen } from "@/utils/chessops";
-import { createFile, isTempImportFile } from "@/utils/files";
+import { createFile } from "@/utils/files";
 import { formatDateToPGN } from "@/utils/format";
-import { createTab, reloadTab, saveTab, saveToFile, type Tab } from "@/utils/tabs";
+import type { Tab } from "@/utils/tabSchema";
+import { createTab, reloadTab } from "@/utils/tabs";
 import { getNodeAtPath, type TreeNode } from "@/utils/treeReducer";
 import EditingCard from "./EditingCard";
 import EvalListener from "./EvalListener";
@@ -56,7 +62,6 @@ function BoardVariants() {
   const reset = useStore(store, (s) => s.reset);
   const clearShapes = useStore(store, (s) => s.clearShapes);
   const setStoreState = useStore(store, (s) => s.setState);
-  const setStoreSave = useStore(store, (s) => s.save);
   const root = useStore(store, (s) => s.root);
   const headers = useStore(store, (s) => s.headers);
   const position = useStore(store, (s) => s.position);
@@ -75,39 +80,15 @@ function BoardVariants() {
 
   const saveFile = useCallback(
     async (showNotification = true) => {
+      if (!currentTab) return;
       try {
-        if (
-          currentTab?.source != null &&
-          currentTab?.source?.type === "file" &&
-          !isTempImportFile(currentTab?.source?.path)
-        ) {
-          // Save the file
-          await saveTab(currentTab, store);
-          // Mark as saved in the store
-          setStoreSave();
-          // Show success notification only if requested
-          if (showNotification) {
-            notifications.show({
-              title: t("common.save"),
-              message: t("common.fileSavedSuccessfully"),
-              color: "green",
-            });
-          }
-        } else {
-          // Save to a new file
-          await saveToFile({
-            dir: documentDir,
-            setCurrentTab,
-            tab: currentTab,
-            store,
+        const result = await saveTab(currentTab.value, { dir: documentDir });
+        if (result === "saved" && showNotification) {
+          notifications.show({
+            title: t("common.save"),
+            message: t("common.fileSavedSuccessfully"),
+            color: "green",
           });
-          if (showNotification) {
-            notifications.show({
-              title: t("common.save"),
-              message: t("common.fileSavedSuccessfully"),
-              color: "green",
-            });
-          }
         }
       } catch {
         // Always show error notifications
@@ -118,7 +99,7 @@ function BoardVariants() {
         });
       }
     },
-    [setCurrentTab, currentTab, documentDir, store, setStoreSave, t],
+    [currentTab, documentDir, t],
   );
 
   // Get board orientation (default to white if not set)
@@ -316,9 +297,19 @@ function BoardVariants() {
   const keyMap = useAtomValue(keyMapAtom);
 
   useHotkeys([
+    [keyMap.SAVE_FILE.keys, () => saveFile()],
     [keyMap.COPY_FEN.keys, copyFen],
     [keyMap.COPY_PGN.keys, copyPgn],
   ]);
+
+  const boardCommands = useMemo<BoardCommandRegistration>(
+    () => ({
+      engineRunning: false,
+      commands: { save: { id: "save", run: () => void saveFile() } },
+    }),
+    [saveFile],
+  );
+  useRegisterBoardCommands(currentTab?.value, boardCommands);
 
   const [currentTabSelected, setCurrentTabSelected] = useAtom(currentTabSelectedAtom);
   const practiceTabSelected = useAtomValue(currentPracticeTabAtom);

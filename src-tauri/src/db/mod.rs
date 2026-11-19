@@ -1,33 +1,35 @@
+mod cache;
 mod connection;
 mod core;
 mod encoding;
 mod export;
+#[cfg(test)]
+mod freshness_tests;
 mod game_index;
 mod import;
 mod maintenance;
 mod models;
+mod move_blob;
 mod ops;
 mod pgn;
 mod progress;
 mod schema;
 mod search;
+mod write;
 
 use crate::{
-    db::{encoding::extract_main_line_moves, import::insert_to_db, models::*, schema::*},
-    error::{Error, Result},
+    db::{encoding::extract_main_line_moves, models::*, schema::*},
+    error::Result,
     opening::get_opening_from_setup,
     AppState,
 };
 use dashmap::DashMap;
 use diesel::{connection::SimpleConnection, dsl::sql, prelude::*, sql_query, sql_types::Text};
-use pgn::Importer;
-use pgn_reader::BufferedReader;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use shakmaty::{Chess, EnPassantMode, Position};
 use specta::Type;
 use std::{
-    fs::File,
     path::PathBuf,
     sync::atomic::{AtomicUsize, Ordering},
     time::Instant,
@@ -38,7 +40,9 @@ use tauri::{path::BaseDirectory, Manager};
 use log::info;
 use tauri_specta::Event as _;
 
-pub(crate) use self::connection::{get_db_or_create, ConnectionOptions, JournalMode};
+pub(crate) use self::connection::{
+    get_db_or_create, ConnectionOptions, GAME_DATE_EXPR, GAME_TIME_EXPR,
+};
 pub use self::export::export_to_pgn;
 pub use self::game_index::{build_position_index, delete_position_index};
 pub(crate) use self::import::get_pawn_home;
@@ -72,64 +76,75 @@ pub async fn convert_pgn(
     state: tauri::State<'_, AppState>,
 ) -> Result<()> {
     let description = description.unwrap_or_default();
-    let extension = file.extension();
+    if !db_path.exists() {
+        // A pool from an earlier file at this path has nothing to say about the new one.
+        state.connection_pool.remove(db_path.to_str().unwrap());
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let start = Instant::now();
+        import_pgn(&file, &db_path, timestamp, &title, &description, |i| {
+            let elapsed = start.elapsed().as_millis() as u32;
+            app.emit("convert_progress", (i, elapsed)).unwrap();
+        })
+    })
+    .await
+    .map_err(|e| crate::error::Error::Io(std::io::Error::other(e)))?
+}
 
+/// Imports a PGN file into the database at `db_path`, creating it when new.
+/// Runs on its own connection with the fast import settings; the pool keeps
+/// the safe ones.
+pub(crate) fn import_pgn(
+    file: &std::path::Path,
+    db_path: &std::path::Path,
+    timestamp: Option<i32>,
+    title: &str,
+    description: &str,
+    on_progress: impl FnMut(usize),
+) -> Result<()> {
     let db_exists = db_path.exists();
+    let result = import_into(
+        file,
+        db_path,
+        db_exists,
+        timestamp,
+        title,
+        description,
+        on_progress,
+    );
+    if result.is_err() && !db_exists {
+        // A half-built file, written without a journal, is not a database.
+        let _ = std::fs::remove_file(db_path);
+    }
+    result
+}
 
-    // create the database file
-    let db = &mut get_db_or_create(
-        &state,
-        db_path.to_str().unwrap(),
-        ConnectionOptions {
-            enable_foreign_keys: false,
-            busy_timeout: None,
-            journal_mode: JournalMode::Off,
-        },
-    )?;
+fn import_into(
+    file: &std::path::Path,
+    db_path: &std::path::Path,
+    db_exists: bool,
+    timestamp: Option<i32>,
+    title: &str,
+    description: &str,
+    on_progress: impl FnMut(usize),
+) -> Result<()> {
+    let db = &mut ConnectionOptions::import(!db_exists).connect(db_path.to_str().unwrap())?;
 
     if !db_exists {
-        core::init_db(db, &title, &description)?;
+        core::init_db(db, title, description)?;
     }
 
     // Created before the import loop: insert_to_db checks it per game.
     db.batch_execute(GAMES_IDENTITY_INDEX_SQL)?;
 
-    let file = File::open(&file)?;
-
-    let uncompressed: Box<dyn std::io::Read + Send> = if extension == Some("bz2".as_ref()) {
-        Box::new(bzip2::read::MultiBzDecoder::new(file))
-    } else if extension == Some("zst".as_ref()) {
-        Box::new(zstd::Decoder::new(file)?)
-    } else {
-        Box::new(file)
-    };
-
-    // start counting time
-    let start = Instant::now();
-
-    let mut importer = Importer::new(timestamp.map(|t| t as i64));
-    db.transaction::<_, Error, _>(|db| {
-        for (i, game) in BufferedReader::new(uncompressed)
-            .into_iter(&mut importer)
-            .flatten()
-            .flatten()
-            .enumerate()
-        {
-            if i % 1000 == 0 {
-                let elapsed = start.elapsed().as_millis() as u32;
-                app.emit("convert_progress", (i, elapsed)).unwrap();
-            }
-            insert_to_db(db, &game)?;
-        }
-        Ok(())
+    write::apply(db, write::Change::GamesInserted, |db| {
+        import::import_file(db, file, timestamp.map(|t| t as i64), on_progress)
     })?;
 
     if !db_exists {
         // Create all the necessary indexes
         db.batch_execute(INDEXES_SQL)?;
     }
-
-    core::refresh_info_counts(db)?;
 
     Ok(())
 }
@@ -173,7 +188,7 @@ pub async fn get_db_info(
 
     let path = app.path().resolve(db_path, BaseDirectory::AppData)?;
 
-    let db = &mut get_db_or_create(&state, path.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(&state, path.to_str().unwrap())?;
 
     let counts = core::db_counts(db)?;
 
@@ -213,18 +228,20 @@ pub async fn get_db_info(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn create_indexes(file: PathBuf, state: tauri::State<'_, AppState>) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
-
-    db.batch_execute(INDEXES_SQL)?;
-
-    Ok(())
+pub async fn create_indexes(file: PathBuf, app: tauri::AppHandle) -> Result<()> {
+    maintenance::blocking(move || {
+        let state = app.state::<AppState>();
+        let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
+        db.batch_execute(INDEXES_SQL)?;
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
 #[specta::specta]
 pub async fn delete_indexes(file: PathBuf, state: tauri::State<'_, AppState>) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
 
     db.batch_execute(DELETE_INDEXES_SQL)?;
 
@@ -239,7 +256,7 @@ pub async fn edit_db_info(
     description: Option<String>,
     state: tauri::State<'_, AppState>,
 ) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
 
     if let Some(title) = title {
         diesel::insert_into(info::table)
@@ -361,7 +378,7 @@ pub async fn get_games(
     query: GameQueryJs,
     state: tauri::State<'_, AppState>,
 ) -> Result<QueryResponse<Vec<NormalizedGame>>> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
 
     let mut count: Option<i64> = None;
     let query_options = query.options.unwrap_or_default();
@@ -386,17 +403,13 @@ pub async fn get_games(
     }
 
     if let Some(start_date) = query.start_date {
-        sql_query = sql_query
-            .filter(sql::<Text>("COALESCE(Games.EndDate, Games.Date)").ge(start_date.clone()));
-        count_query =
-            count_query.filter(sql::<Text>("COALESCE(Games.EndDate, Games.Date)").ge(start_date));
+        sql_query = sql_query.filter(sql::<Text>(GAME_DATE_EXPR).ge(start_date.clone()));
+        count_query = count_query.filter(sql::<Text>(GAME_DATE_EXPR).ge(start_date));
     }
 
     if let Some(end_date) = query.end_date {
-        sql_query = sql_query
-            .filter(sql::<Text>("COALESCE(Games.EndDate, Games.Date)").le(end_date.clone()));
-        count_query =
-            count_query.filter(sql::<Text>("COALESCE(Games.EndDate, Games.Date)").le(end_date));
+        sql_query = sql_query.filter(sql::<Text>(GAME_DATE_EXPR).le(end_date.clone()));
+        count_query = count_query.filter(sql::<Text>(GAME_DATE_EXPR).le(end_date));
     }
 
     if let Some(tournament_id) = query.tournament_id {
@@ -522,12 +535,12 @@ pub async fn get_games(
         },
         GameSort::Date => match query_options.direction {
             SortDirection::Asc => sql_query.order((
-                sql::<Text>("COALESCE(Games.EndDate, Games.Date)").asc(),
-                sql::<Text>("COALESCE(Games.EndTime, Games.UTCTime)").asc(),
+                sql::<Text>(GAME_DATE_EXPR).asc(),
+                sql::<Text>(GAME_TIME_EXPR).asc(),
             )),
             SortDirection::Desc => sql_query.order((
-                sql::<Text>("COALESCE(Games.EndDate, Games.Date)").desc(),
-                sql::<Text>("COALESCE(Games.EndTime, Games.UTCTime)").desc(),
+                sql::<Text>(GAME_DATE_EXPR).desc(),
+                sql::<Text>(GAME_TIME_EXPR).desc(),
             )),
         },
         GameSort::WhiteElo => match query_options.direction {
@@ -635,7 +648,7 @@ pub async fn get_player(
     id: i32,
     state: tauri::State<'_, AppState>,
 ) -> Result<Option<Player>> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
     let player = players::table
         .filter(players::id.eq(id))
         .first::<Player>(db)
@@ -650,7 +663,7 @@ pub async fn get_players(
     query: PlayerQuery,
     state: tauri::State<'_, AppState>,
 ) -> Result<QueryResponse<Vec<Player>>> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
     let mut count: Option<i64> = None;
 
     let mut sql_query = players::table.into_boxed();
@@ -724,7 +737,7 @@ pub async fn get_tournaments(
     query: TournamentQuery,
     state: tauri::State<'_, AppState>,
 ) -> Result<QueryResponse<Vec<Event>>> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
     let mut count: Option<i64> = None;
 
     let mut sql_query = events::table.into_boxed();
@@ -826,7 +839,7 @@ pub async fn get_players_game_info(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,
 ) -> Result<PlayerGameInfo> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
     let timer = Instant::now();
 
     let sql_query = games::table
@@ -980,16 +993,13 @@ pub async fn get_players_game_info(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn delete_db_game(
-    file: PathBuf,
-    game_id: i32,
-    state: tauri::State<'_, AppState>,
-) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
-
-    core::remove_game(db, game_id)?;
-
-    Ok(())
+pub async fn delete_db_game(file: PathBuf, game_id: i32, app: tauri::AppHandle) -> Result<()> {
+    maintenance::blocking(move || {
+        let state = app.state::<AppState>();
+        let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
+        write::remove_game(db, game_id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -999,7 +1009,7 @@ pub async fn get_game(
     game_id: i32,
     state: tauri::State<'_, AppState>,
 ) -> Result<NormalizedGame> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
 
     core::get_game(db, game_id)
 }
@@ -1010,13 +1020,14 @@ pub async fn update_game(
     file: PathBuf,
     game_id: i32,
     update: UpdateGame,
-    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
-
-    core::update_game(db, game_id, &update)?;
-
-    Ok(())
+    maintenance::blocking(move || {
+        let state = app.state::<AppState>();
+        let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
+        write::update_game(db, game_id, &update)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1025,32 +1036,31 @@ pub async fn merge_players(
     file: PathBuf,
     player1: i32,
     player2: i32,
-    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap(), ConnectionOptions::default())?;
+    maintenance::blocking(move || {
+        let state = app.state::<AppState>();
+        let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
+        write::merge_players(db, player1, player2)
+    })
+    .await
+}
 
-    // Check if the players never played against each other
-    let count: i64 = games::table
-        .filter(games::white_id.eq(player1).and(games::black_id.eq(player2)))
-        .or_filter(games::white_id.eq(player2).and(games::black_id.eq(player1)))
-        .limit(1)
-        .count()
-        .get_result(db)?;
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    if count > 0 {
-        return Err(Error::NotDistinctPlayers);
+    #[test]
+    fn indexed_follows_the_named_indexes_not_the_identity_index() {
+        let mut conn = SqliteConnection::establish(":memory:").unwrap();
+        core::init_db(&mut conn, "T", "D").unwrap();
+        conn.batch_execute(GAMES_IDENTITY_INDEX_SQL).unwrap();
+        assert!(!check_index_exists(&mut conn).unwrap());
+
+        conn.batch_execute(INDEXES_SQL).unwrap();
+        assert!(check_index_exists(&mut conn).unwrap());
+
+        conn.batch_execute(DELETE_INDEXES_SQL).unwrap();
+        assert!(!check_index_exists(&mut conn).unwrap());
     }
-
-    diesel::update(games::table.filter(games::white_id.eq(player1)))
-        .set(games::white_id.eq(player2))
-        .execute(db)?;
-    diesel::update(games::table.filter(games::black_id.eq(player1)))
-        .set(games::black_id.eq(player2))
-        .execute(db)?;
-
-    diesel::delete(players::table.filter(players::id.eq(player1))).execute(db)?;
-
-    core::refresh_info_counts(db)?;
-
-    Ok(())
 }

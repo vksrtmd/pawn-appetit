@@ -9,6 +9,7 @@ import type { PlayerGameInfo } from "@/bindings";
 import { commands, type GameOutcome } from "@/bindings";
 import { activeTabAtom, fontSizeAtom, tabsAtom } from "@/state/atoms";
 import { parsePGN } from "@/utils/chess";
+import { notifyPgnParseError } from "@/utils/pgnParseError";
 import { createTab } from "@/utils/tabs";
 import { getTimeControl } from "@/utils/timeControl";
 import { countMainPly, defaultTree } from "@/utils/treeReducer";
@@ -185,7 +186,13 @@ function OpeningDetail({
           onClick={async () => {
             const pgn = unwrap(await commands.getOpeningFromName(opening.name));
             const headers = defaultTree().headers;
-            const tree = await parsePGN(pgn);
+            let tree: Awaited<ReturnType<typeof parsePGN>>;
+            try {
+              tree = await parsePGN(pgn);
+            } catch (e) {
+              if (notifyPgnParseError(e)) return;
+              throw e;
+            }
             headers.orientation = color;
             createTab({
               tab: { name: opening.name, type: "analysis" },

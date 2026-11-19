@@ -29,9 +29,9 @@ import {
   tabsAtom,
 } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
+import { save } from "@/state/tabSession";
 import { defaultPGN, getPGN } from "@/utils/chess";
-import { isTempImportFile } from "@/utils/files";
-import { createTab, reloadTab, saveTab, saveToFile } from "@/utils/tabs";
+import { createTab, reloadTab } from "@/utils/tabs";
 import { getNodeAtPath } from "@/utils/treeReducer";
 import EditingCard from "./EditingCard";
 import EvalListener from "./EvalListener";
@@ -63,7 +63,6 @@ function BoardAnalysis() {
   const clearShapes = useStore(store, (s) => s.clearShapes);
   const setAnnotation = useStore(store, (s) => s.setAnnotation);
   const setStoreState = useStore(store, (s) => s.setState);
-  const setStoreSave = useStore(store, (s) => s.save);
   const root = useStore(store, (s) => s.root);
   const headers = useStore(store, (s) => s.headers);
   const setFen = useStore(store, (s) => s.setFen);
@@ -73,26 +72,13 @@ function BoardAnalysis() {
   const deleteMove = useStore(store, (s) => s.deleteMove);
 
   const saveFile = useCallback(async () => {
+    if (!currentTab) return;
     try {
-      if (
-        currentTab?.source != null &&
-        currentTab?.source?.type === "file" &&
-        !isTempImportFile(currentTab?.source?.path)
-      ) {
-        await saveTab(currentTab, store);
-        setStoreSave();
-      } else {
-        await saveToFile({
-          dir: documentDir,
-          setCurrentTab,
-          tab: currentTab,
-          store,
-        });
-      }
+      await save(currentTab.value, { dir: documentDir });
     } catch {
       // The failed write was already reported; the tab stays dirty.
     }
-  }, [setCurrentTab, currentTab, documentDir, store, setStoreSave]);
+  }, [currentTab, documentDir]);
 
   const reloadBoard = useCallback(async () => {
     if (currentTab != null) {

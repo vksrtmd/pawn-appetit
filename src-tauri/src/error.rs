@@ -99,8 +99,11 @@ pub enum Error {
     #[error("Cannot merge players: they are distinct players who have played against each other")]
     NotDistinctPlayers,
 
-    #[error("Invalid binary data")]
-    InvalidBinaryData,
+    #[error("Malformed move blob: {0}")]
+    MalformedMoveBlob(String),
+
+    #[error("Failed to read the import file: {0}")]
+    ImportRead(String),
 
     #[error("Failed to acquire mutex lock: {0}")]
     MutexLockFailed(String),
@@ -115,6 +118,9 @@ pub enum Error {
     #[allow(dead_code)]
     #[error("Engine initialization failed: {0}")]
     EngineInitFailed(String),
+
+    #[error("Engine was stopped before it finished starting")]
+    EngineKilled,
 
     #[error("Analysis cancelled")]
     AnalysisCancelled,

@@ -1,8 +1,9 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { dateKey } from "@/utils/puzzleStreak";
 import { practices } from "@/features/train/constants/practices";
 
-export interface UserStats {
+interface UserStats {
     practiceCompleted: number;
     totalPractice: number;
     totalPoints: number;
@@ -53,7 +54,7 @@ export const useUserStatsStore = create<UserStatsState>()(
 
                     if (stats.completedExercises || stats.completedPractice) {
                         const hasToday = updated.completionDates.some(
-                            (d) => d.slice(0, 10) === todayISO.slice(0, 10),
+                            (d) => dateKey(new Date(d)) === dateKey(),
                         );
                         if (!hasToday)
                             updated.completionDates = [...updated.completionDates, todayISO];

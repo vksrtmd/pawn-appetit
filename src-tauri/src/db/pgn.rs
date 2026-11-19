@@ -1,3 +1,4 @@
+use crate::db::move_blob::{Item, MoveBlobCursor, COMMENT, END_VARIATION, NAG, START_VARIATION};
 use crate::error::{Error, Result};
 use chrono::{NaiveDate, NaiveTime};
 use pgn_reader::{Nag, RawComment, RawHeader, SanPlus, Skip, Visitor};
@@ -27,11 +28,6 @@ pub enum GameTreeNode {
 pub struct GameTree(Vec<GameTreeNode>);
 
 impl GameTree {
-    const START_VARIATION: u8 = 254;
-    const END_VARIATION: u8 = 253;
-    const COMMENT: u8 = 252;
-    const NAG: u8 = 251;
-
     pub fn new() -> Self {
         GameTree::default()
     }
@@ -72,78 +68,67 @@ impl GameTree {
                     }
                 }
                 GameTreeNode::Nag(nag) => {
-                    bytes.push(Self::NAG);
+                    bytes.push(NAG);
                     bytes.push(nag.0);
                 }
                 GameTreeNode::Comment(comment) => {
-                    bytes.push(Self::COMMENT);
+                    bytes.push(COMMENT);
                     bytes.extend((comment.len() as u64).to_be_bytes());
                     bytes.extend(comment.as_bytes());
                 }
                 GameTreeNode::Variation(branch) => {
-                    bytes.push(Self::START_VARIATION);
+                    bytes.push(START_VARIATION);
                     branch.encode(bytes, Some(prev_position.clone()));
-                    bytes.push(Self::END_VARIATION);
+                    bytes.push(END_VARIATION);
                 }
             }
         }
     }
 
-    fn from_bytes_impl(mut bytes: &[u8], position: Chess) -> Result<(Vec<GameTreeNode>, &[u8])> {
-        let mut prev_position: Chess = position.clone();
-        let mut cur_position: Chess = position;
-        let mut tree: Vec<GameTreeNode> = Vec::new();
-
+    /// Read nodes until the end of the blob, or of the variation when `depth > 0`.
+    fn read_branch(cursor: &mut MoveBlobCursor, depth: usize) -> Result<Vec<GameTreeNode>> {
+        let nested = depth > 0;
+        let mut tree = Vec::new();
+        let mut prev = cursor.position().clone();
         loop {
-            match bytes.first().copied() {
-                Some(Self::NAG) => {
-                    tree.push(GameTreeNode::Nag(Nag(bytes[1])));
-                    bytes = &bytes[2..];
+            let before = cursor.position().clone();
+            let item = cursor.next_item()?;
+            match item {
+                None if nested => {
+                    return Err(Error::MalformedMoveBlob("unterminated variation".into()))
                 }
-                Some(Self::COMMENT) => {
-                    let length = u64::from_be_bytes(
-                        bytes[1..]
-                            .first_chunk::<8>()
-                            .ok_or(Error::InvalidBinaryData)?
-                            .to_owned(),
-                    ) as usize;
-                    tree.push(GameTreeNode::Comment(String::from_utf8(
-                        bytes[9..9 + length].to_owned(),
-                    )?));
-                    bytes = &bytes[9 + length..];
+                None | Some(Item::EndVariation) => return Ok(tree),
+                Some(Item::Nag(value)) => tree.push(GameTreeNode::Nag(Nag(value))),
+                Some(Item::Comment(text)) => {
+                    tree.push(GameTreeNode::Comment(String::from_utf8(text.to_owned())?))
                 }
-                Some(Self::END_VARIATION) => {
-                    bytes = &bytes[1..];
-                    break;
+                Some(Item::Move(m)) => {
+                    let mut played = before.clone();
+                    let san = SanPlus::from_move_and_play_unchecked(&mut played, &m);
+                    tree.push(GameTreeNode::Move(san));
+                    prev = before;
                 }
-                Some(Self::START_VARIATION) => {
-                    let (branch, rest) = Self::from_bytes_impl(&bytes[1..], prev_position.clone())?;
-                    tree.push(GameTreeNode::Variation(GameTree(branch)));
-                    bytes = rest;
-                }
-                Some(byte) => {
-                    if let Some(m) = cur_position.legal_moves().get(byte as usize) {
-                        prev_position = cur_position.clone();
-                        let san = SanPlus::from_move_and_play_unchecked(&mut cur_position, m);
-                        tree.push(GameTreeNode::Move(san));
-                        bytes = &bytes[1..];
-                    } else {
-                        return Err(Error::InvalidBinaryData);
+                Some(Item::StartVariation) => {
+                    // The variation replaces the move just read, so it starts
+                    // from the position before it.
+                    if depth >= MAX_VARIATION_DEPTH {
+                        return Err(Error::MalformedMoveBlob(
+                            "variations nested too deep".into(),
+                        ));
                     }
-                }
-                None => {
-                    break;
+                    let main_line = cursor.position().clone();
+                    cursor.set_position(prev.clone());
+                    let branch = Self::read_branch(cursor, depth + 1)?;
+                    cursor.set_position(main_line);
+                    tree.push(GameTreeNode::Variation(GameTree(branch)));
                 }
             }
         }
-
-        Ok((tree, bytes))
     }
 
     pub fn from_bytes(bytes: &[u8], position: Option<Chess>) -> Result<Self> {
-        Ok(Self(
-            Self::from_bytes_impl(bytes, position.unwrap_or_default())?.0,
-        ))
+        let mut cursor = MoveBlobCursor::new(bytes, position.unwrap_or_default());
+        Ok(Self(Self::read_branch(&mut cursor, 0)?))
     }
 
     pub fn pretty_print(
@@ -199,7 +184,16 @@ impl GameTree {
 
 impl std::fmt::Display for GameTree {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self.pretty_print(f, None) {
+        self.movetext_from(None).fmt(f)
+    }
+}
+
+/// A game tree printed from a given start position (`None`: the standard one).
+pub struct FromPosition<'a>(&'a GameTree, Option<Chess>);
+
+impl std::fmt::Display for FromPosition<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0.pretty_print(f, self.1.clone()) {
             Ok(()) => Ok(()),
             Err(Error::Fmt(err)) => Err(err),
             Err(_) => {
@@ -207,6 +201,13 @@ impl std::fmt::Display for GameTree {
                 Ok(())
             }
         }
+    }
+}
+
+impl GameTree {
+    /// The tree as movetext whose first move is played from `start`.
+    pub fn movetext_from(&self, start: Option<Chess>) -> FromPosition<'_> {
+        FromPosition(self, start)
     }
 }
 
@@ -296,9 +297,9 @@ impl Visitor for Importer {
         } else if key == b"EndTime" {
             self.game.end_time = Some(String::from_utf8_lossy(value.as_bytes()).to_string());
         } else if key == b"Site" {
-            self.game.site_name = Some(String::from_utf8_lossy(value.as_bytes()).to_string());
+            self.game.site_name = Some(value.decode_utf8_lossy().into_owned());
         } else if key == b"Event" {
-            self.game.event_name = Some(String::from_utf8_lossy(value.as_bytes()).to_string());
+            self.game.event_name = Some(value.decode_utf8_lossy().into_owned());
         } else if key == b"Result" {
             self.game.result = Some(String::from_utf8_lossy(value.as_bytes()).to_string());
         } else if key == b"FEN" {
@@ -308,9 +309,16 @@ impl Visitor for Importer {
                 let fen = Fen::from_ascii(value.as_bytes());
                 if let Ok(fen) = fen {
                     self.game.fen = Some(value.decode_utf8_lossy().into_owned());
-                    if let Ok(setup) =
-                        Chess::from_setup(fen.into_setup(), shakmaty::CastlingMode::Standard)
+                    // Standard castling first; a Chess960 start (rooks off the a/h
+                    // files, a king off e) only reads in Chess960 mode.
+                    let setup = fen.into_setup();
+                    let read = |mode| {
+                        Chess::from_setup(setup.clone(), mode)
                             .or_else(PositionError::ignore_too_much_material)
+                            .ok()
+                    };
+                    if let Some(setup) = read(shakmaty::CastlingMode::Standard)
+                        .or_else(|| read(shakmaty::CastlingMode::Chess960))
                     {
                         self.game.position = setup;
                     } else {
@@ -352,7 +360,9 @@ impl Visitor for Importer {
 
     fn comment(&mut self, comment: RawComment<'_>) {
         if let Ok(comment) = String::from_utf8(comment.as_bytes().to_owned()) {
-            self.active_branch().push(GameTreeNode::Comment(comment));
+            // The app writes `}` inside a comment as `\u007d`, since a PGN comment has no escape.
+            self.active_branch()
+                .push(GameTreeNode::Comment(comment.replace("\\u007d", "}")));
         }
     }
 
@@ -404,6 +414,9 @@ impl Visitor for Importer {
     }
 }
 
+/// How deep variations may nest in a stored game; real games stay far below it.
+const MAX_VARIATION_DEPTH: usize = 128;
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -413,6 +426,48 @@ mod test {
     fn trim(s: &str) -> String {
         let re = Regex::new(r"\s+").unwrap();
         re.replace_all(s, " ").to_string()
+    }
+
+    #[test]
+    fn a_comment_decodes_u007d_to_a_closing_brace_and_nothing_else() {
+        let pgn = r"1. e4 {a \u007d b \\ \n \u0041} *";
+        let mut reader = BufferedReader::new_cursor(pgn);
+        let game = reader
+            .read_game(&mut Importer::new(None))
+            .unwrap()
+            .flatten()
+            .unwrap();
+        let comment = game.tree.0.iter().find_map(|n| match n {
+            GameTreeNode::Comment(c) => Some(c.clone()),
+            _ => None,
+        });
+        assert_eq!(comment.as_deref(), Some(r"a } b \\ \n \u0041"));
+    }
+
+    #[test]
+    fn deeply_nested_variations_fail_to_decode_without_overflowing_the_stack() {
+        let blob = vec![START_VARIATION; 1_000_000];
+        assert!(matches!(
+            GameTree::from_bytes(&blob, None),
+            Err(Error::MalformedMoveBlob(_))
+        ));
+    }
+
+    #[test]
+    fn malformed_blobs_fail_to_decode_without_panicking() {
+        let mut huge = vec![12, COMMENT];
+        huge.extend(u64::MAX.to_be_bytes());
+        let mut past_end = vec![12, COMMENT];
+        past_end.extend(9u64.to_be_bytes());
+        for blob in [vec![12, NAG], huge, past_end, vec![12, 200]] {
+            assert!(
+                matches!(
+                    GameTree::from_bytes(&blob, None),
+                    Err(Error::MalformedMoveBlob(_))
+                ),
+                "{blob:?}"
+            );
+        }
     }
 
     #[test]

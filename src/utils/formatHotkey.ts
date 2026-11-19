@@ -64,5 +64,3 @@ export function formatHotkeyDisplay(combo: string): string {
 export function splitHotkeyDisplay(combo: string): string[] {
     return formatHotkeyDisplay(combo).split("+");
 }
-
-export default formatHotkeyDisplay;

@@ -5,13 +5,13 @@
 import { atom } from "jotai";
 import { atomWithStorage, createJSONStorage, unwrap } from "jotai/utils";
 import { atomFamily } from "jotai-family";
+import { tabAtomFamily } from "./tabAtoms";
 import type { SyncStorage } from "jotai/vanilla/utils/atomWithStorage";
 import type { ReviewLog } from "ts-fsrs";
 import { z } from "zod";
 import { commands } from "@/bindings";
 import type { OpponentSettings } from "@/features/boards/components/BoardGame";
 import { type Position, positionSchema } from "@/features/files/utils/opening";
-import type { SuccessDatabaseInfo } from "@/utils/db";
 import type { MissingMove } from "@/utils/repertoire";
 import { createZodStorage } from "./utils";
 import { tabValue } from "./uiAtoms";
@@ -43,11 +43,6 @@ export const forgetReferenceDbAtom = atom(null, (get, set, file: string) => {
 });
 
 export const selectedPuzzleDbAtom = atomWithStorage<string | null>("puzzle-db", null);
-export const selectedDatabaseAtom = atomWithStorage<SuccessDatabaseInfo | null>(
-    "database-view",
-    null,
-    createJSONStorage(() => sessionStorage),
-);
 
 // ---------------------------------------------------------------------------
 // Puzzle settings
@@ -124,10 +119,10 @@ export const deckAtomFamily = atomFamily(
 // ---------------------------------------------------------------------------
 
 export type GameState = "settingUp" | "playing" | "gameOver";
-const gameStateFamily = atomFamily((_tab: string) => atom<GameState>("settingUp"));
+const gameStateFamily = tabAtomFamily((_tab: string) => atom<GameState>("settingUp"));
 export const currentGameStateAtom = tabValue(gameStateFamily);
 
-const playersFamily = atomFamily((_tab: string) =>
+const playersFamily = tabAtomFamily((_tab: string) =>
     atom<{
         white: OpponentSettings;
         black: OpponentSettings;
@@ -135,5 +130,5 @@ const playersFamily = atomFamily((_tab: string) =>
 );
 export const currentPlayersAtom = tabValue(playersFamily);
 
-const currentPuzzleFamily = atomFamily((_tab: string) => atom(0));
+const currentPuzzleFamily = tabAtomFamily((_tab: string) => atom(0));
 export const currentPuzzleAtom = tabValue(currentPuzzleFamily);

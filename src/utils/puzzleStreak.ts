@@ -6,7 +6,7 @@ function pad2(n: number) {
     return n < 10 ? `0${n}` : String(n);
 }
 
-function dateKey(d = new Date()): string {
+export function dateKey(d = new Date()): string {
     const year = d.getFullYear();
     const month = pad2(d.getMonth() + 1);
     const day = pad2(d.getDate());
@@ -74,8 +74,6 @@ export function getPuzzleStats(options?: { days?: number; target?: number }) {
 
     return { currentStreak, target, history };
 }
-
-export type PuzzleStats = ReturnType<typeof getPuzzleStats>;
 
 export function getTodayPuzzleCount(d: Date = new Date()): number {
     const solves = readSolves();

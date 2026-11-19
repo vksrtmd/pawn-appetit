@@ -8,7 +8,9 @@ import { useTranslation } from "react-i18next";
 import { Mosaic, type MosaicNode } from "react-mosaic-component";
 import { match } from "ts-pattern";
 
-import { createTab, type Tab } from "@/utils/tabs";
+import { closeOtherTabs, closeTabsToRight } from "@/state/tabSession";
+import type { Tab } from "@/utils/tabSchema";
+import { createTab } from "@/utils/tabs";
 import * as classes from "./BoardsPage.css";
 import { BoardTab } from "./components/BoardTab";
 
@@ -71,26 +73,6 @@ export default function BoardsPage() {
       setActiveTab,
     });
   }, [canCreateNewTab, showTabLimitNotification, t, setTabs, setActiveTab]);
-
-  const closeOtherTabs = useCallback(
-    (tabId: string) => {
-      setTabs((prev) => prev.filter((tab) => tab.value === tabId));
-      setActiveTab(tabId);
-    },
-    [setActiveTab, setTabs],
-  );
-
-  const closeTabsToRight = useCallback(
-    (tabId: string) => {
-      setTabs((prev) => {
-        const index = prev.findIndex((tab) => tab.value === tabId);
-        if (index === -1) return prev;
-        return prev.slice(0, index + 1);
-      });
-      setActiveTab(tabId);
-    },
-    [setActiveTab, setTabs],
-  );
 
   return (
     <DragDropContext

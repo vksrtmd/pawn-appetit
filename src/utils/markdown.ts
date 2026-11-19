@@ -21,7 +21,7 @@ export function normalizeTiptapMarkdown(comment: string) {
 // is sanitized (GitHub's allowlist: no scripts, event handlers, iframes or javascript: URLs).
 // <u> is added back because the editor's underline becomes <u>.
 // <img> is removed so a comment can't load a remote image and track who opens the file.
-export const commentSanitizeSchema: SanitizeSchema = {
+const commentSanitizeSchema: SanitizeSchema = {
     ...defaultSchema,
     tagNames: [...(defaultSchema.tagNames ?? []).filter((t) => t !== "img"), "u"],
 };

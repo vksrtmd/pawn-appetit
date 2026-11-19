@@ -25,14 +25,14 @@ export interface Puzzle {
 }
 
 // Elo rating configuration
-export const ELO_K_FACTOR = 40;
-export const PROGRESSIVE_MIN_PROB = 0.4;
-export const PROGRESSIVE_MAX_PROB = 0.6;
+const ELO_K_FACTOR = 40;
+const PROGRESSIVE_MIN_PROB = 0.4;
+const PROGRESSIVE_MAX_PROB = 0.6;
 
 // Adaptive difficulty configuration
-export const ADAPTIVE_CONSECUTIVE_FAILURES = 3;
-export const ADAPTIVE_EASY_MIN_PROB = 0.6;
-export const ADAPTIVE_EASY_MAX_PROB = 0.8;
+const ADAPTIVE_CONSECUTIVE_FAILURES = 3;
+const ADAPTIVE_EASY_MIN_PROB = 0.6;
+const ADAPTIVE_EASY_MAX_PROB = 0.8;
 
 // Helper functions to get data from different sections
 async function getDatabasesFromDatabasesSection(): Promise<PuzzleDatabaseInfo[]> {
@@ -77,7 +77,7 @@ async function getFilesFromFilesSection(): Promise<PuzzleDatabaseInfo[]> {
             puzzleFiles.map(async (file) => {
                 const stats = unwrap(await commands.getFileMetadata(file.path));
                 return {
-                    title: file.name.replace(".pgn", ""),
+                    title: file.name.replace(/\.pgn$/, ""),
                     description: "Custom puzzle collection",
                     puzzleCount: unwrap(await commands.countPgnGames(file.path)),
                     storageSize: BigInt(stats.size),
@@ -93,7 +93,7 @@ async function getFilesFromFilesSection(): Promise<PuzzleDatabaseInfo[]> {
 }
 
 // Simple Elo-like rating calculations
-export function expectedScore(playerRating: number, puzzleRating: number): number {
+function expectedScore(playerRating: number, puzzleRating: number): number {
     return 1 / (1 + 10 ** ((puzzleRating - playerRating) / 400));
 }
 
@@ -123,7 +123,7 @@ export function updateElo(
 }
 
 // Probability-based range (select puzzles that give expected success rate between minP and maxP)
-export function getPuzzleRangeProb(
+function getPuzzleRangeProb(
     playerRating: number,
     minProb: number = PROGRESSIVE_MIN_PROB,
     maxProb: number = PROGRESSIVE_MAX_PROB,
@@ -151,7 +151,7 @@ export function getPuzzleRangeProb(
 }
 
 // Calculate adaptive probabilities based on recent performance
-export function getAdaptiveProbabilities(recentResults: Completion[]): [number, number] {
+function getAdaptiveProbabilities(recentResults: Completion[]): [number, number] {
     const consecutiveFailures = recentResults.slice().reverse().indexOf("correct");
 
     const failureCount = consecutiveFailures === -1 ? recentResults.length : consecutiveFailures;

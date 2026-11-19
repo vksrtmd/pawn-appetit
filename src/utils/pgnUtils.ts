@@ -19,7 +19,7 @@ export interface GameParseError {
 /**
  * Split PGN content containing multiple games into individual game strings
  */
-export function splitPgnGames(content: string): string[] {
+function splitPgnGames(content: string): string[] {
     // Normalize line endings and remove excessive whitespace
     const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
 
@@ -62,47 +62,4 @@ export async function parseMultiplePgnGames(content: string): Promise<{
     }
 
     return { games, errors };
-}
-
-/**
- * Validate that a string contains valid PGN content
- */
-export function validatePgnContent(content: string): {
-    isValid: boolean;
-    gameCount: number;
-    error?: string;
-} {
-    try {
-        const games = splitPgnGames(content);
-
-        if (games.length === 0) {
-            return {
-                isValid: false,
-                gameCount: 0,
-                error: "No valid PGN games found",
-            };
-        }
-
-        // Check if each game has basic required headers
-        for (const game of games) {
-            if (!game.includes("[Event") || !game.includes("[Result")) {
-                return {
-                    isValid: false,
-                    gameCount: games.length,
-                    error: "PGN games must contain at least Event and Result headers",
-                };
-            }
-        }
-
-        return {
-            isValid: true,
-            gameCount: games.length,
-        };
-    } catch (error) {
-        return {
-            isValid: false,
-            gameCount: 0,
-            error: error instanceof Error ? error.message : "Invalid PGN format",
-        };
-    }
 }
