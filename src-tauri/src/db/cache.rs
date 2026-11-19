@@ -20,9 +20,8 @@ use crate::GameData;
 pub type SearchResult = (Vec<PositionStats>, Vec<NormalizedGame>);
 
 const RESULT_CAPACITY: usize = 100;
-/// Files whose rows are kept in memory at once. Tests run many files in
-/// parallel against the one cache.
-const ROWS_CAPACITY: usize = if cfg!(test) { 64 } else { 3 };
+/// Files whose rows are kept in memory at once.
+const ROWS_CAPACITY: usize = 3;
 
 pub struct SearchCache {
     inner: Mutex<Inner>,
@@ -32,10 +31,13 @@ struct Inner {
     generations: HashMap<PathBuf, u64>,
     rows: HashMap<PathBuf, Arc<Vec<GameData>>>,
     results: lru::LruCache<(GameQueryJs, PathBuf), SearchResult>,
+    rows_capacity: usize,
 }
 
 /// The process-wide cache every search and write goes through.
-pub static SEARCH_CACHE: LazyLock<SearchCache> = LazyLock::new(SearchCache::new);
+/// Tests run many files in parallel against it, so it holds more of them.
+pub static SEARCH_CACHE: LazyLock<SearchCache> =
+    LazyLock::new(|| SearchCache::with_rows_capacity(if cfg!(test) { 64 } else { ROWS_CAPACITY }));
 
 /// Drops everything derived from the games of `path`.
 pub fn invalidate(path: &Path) {
@@ -49,11 +51,16 @@ fn key(path: &Path) -> PathBuf {
 
 impl SearchCache {
     pub fn new() -> Self {
+        Self::with_rows_capacity(ROWS_CAPACITY)
+    }
+
+    fn with_rows_capacity(rows_capacity: usize) -> Self {
         Self {
             inner: Mutex::new(Inner {
                 generations: HashMap::new(),
                 rows: HashMap::new(),
                 results: lru::LruCache::new(std::num::NonZeroUsize::new(RESULT_CAPACITY).unwrap()),
+                rows_capacity,
             }),
         }
     }
@@ -74,7 +81,7 @@ impl SearchCache {
         if inner.generations.get(&path).copied().unwrap_or(0) != generation {
             return;
         }
-        if inner.rows.len() >= ROWS_CAPACITY && !inner.rows.contains_key(&path) {
+        if inner.rows.len() >= inner.rows_capacity && !inner.rows.contains_key(&path) {
             inner.rows.clear();
         }
         inner.rows.insert(path, rows);
@@ -129,5 +136,30 @@ impl SearchCache {
 impl Default for SearchCache {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rows_beyond_the_capacity_evict_the_cached_ones() {
+        let cache = SearchCache::new();
+        let paths: Vec<PathBuf> = (0..=ROWS_CAPACITY)
+            .map(|i| PathBuf::from(format!("/no/such/dir/file{i}.db3")))
+            .collect();
+        for p in &paths[..ROWS_CAPACITY] {
+            cache.store_rows(p, cache.generation(p), Arc::new(Vec::new()));
+        }
+        assert!(paths[..ROWS_CAPACITY]
+            .iter()
+            .all(|p| cache.rows(p).is_some()));
+        let last = &paths[ROWS_CAPACITY];
+        cache.store_rows(last, cache.generation(last), Arc::new(Vec::new()));
+        assert!(cache.rows(last).is_some());
+        assert!(paths[..ROWS_CAPACITY]
+            .iter()
+            .any(|p| cache.rows(p).is_none()));
     }
 }

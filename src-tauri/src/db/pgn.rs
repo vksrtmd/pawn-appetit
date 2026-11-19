@@ -85,8 +85,9 @@ impl GameTree {
         }
     }
 
-    /// Read nodes until the end of the blob, or of the variation when `nested`.
-    fn read_branch(cursor: &mut MoveBlobCursor, nested: bool) -> Result<Vec<GameTreeNode>> {
+    /// Read nodes until the end of the blob, or of the variation when `depth > 0`.
+    fn read_branch(cursor: &mut MoveBlobCursor, depth: usize) -> Result<Vec<GameTreeNode>> {
+        let nested = depth > 0;
         let mut tree = Vec::new();
         let mut prev = cursor.position().clone();
         loop {
@@ -110,9 +111,14 @@ impl GameTree {
                 Some(Item::StartVariation) => {
                     // The variation replaces the move just read, so it starts
                     // from the position before it.
+                    if depth >= MAX_VARIATION_DEPTH {
+                        return Err(Error::MalformedMoveBlob(
+                            "variations nested too deep".into(),
+                        ));
+                    }
                     let main_line = cursor.position().clone();
                     cursor.set_position(prev.clone());
-                    let branch = Self::read_branch(cursor, true)?;
+                    let branch = Self::read_branch(cursor, depth + 1)?;
                     cursor.set_position(main_line);
                     tree.push(GameTreeNode::Variation(GameTree(branch)));
                 }
@@ -122,7 +128,7 @@ impl GameTree {
 
     pub fn from_bytes(bytes: &[u8], position: Option<Chess>) -> Result<Self> {
         let mut cursor = MoveBlobCursor::new(bytes, position.unwrap_or_default());
-        Ok(Self(Self::read_branch(&mut cursor, false)?))
+        Ok(Self(Self::read_branch(&mut cursor, 0)?))
     }
 
     pub fn pretty_print(
@@ -353,7 +359,9 @@ impl Visitor for Importer {
 
     fn comment(&mut self, comment: RawComment<'_>) {
         if let Ok(comment) = String::from_utf8(comment.as_bytes().to_owned()) {
-            self.active_branch().push(GameTreeNode::Comment(comment));
+            // The app writes `}` inside a comment as `\u007d`, since a PGN comment has no escape.
+            self.active_branch()
+                .push(GameTreeNode::Comment(comment.replace("\\u007d", "}")));
         }
     }
 
@@ -405,6 +413,9 @@ impl Visitor for Importer {
     }
 }
 
+/// How deep variations may nest in a stored game; real games stay far below it.
+const MAX_VARIATION_DEPTH: usize = 128;
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -414,6 +425,31 @@ mod test {
     fn trim(s: &str) -> String {
         let re = Regex::new(r"\s+").unwrap();
         re.replace_all(s, " ").to_string()
+    }
+
+    #[test]
+    fn a_comment_decodes_u007d_to_a_closing_brace_and_nothing_else() {
+        let pgn = r"1. e4 {a \u007d b \\ \n \u0041} *";
+        let mut reader = BufferedReader::new_cursor(pgn);
+        let game = reader
+            .read_game(&mut Importer::new(None))
+            .unwrap()
+            .flatten()
+            .unwrap();
+        let comment = game.tree.0.iter().find_map(|n| match n {
+            GameTreeNode::Comment(c) => Some(c.clone()),
+            _ => None,
+        });
+        assert_eq!(comment.as_deref(), Some(r"a } b \\ \n \u0041"));
+    }
+
+    #[test]
+    fn deeply_nested_variations_fail_to_decode_without_overflowing_the_stack() {
+        let blob = vec![START_VARIATION; 1_000_000];
+        assert!(matches!(
+            GameTree::from_bytes(&blob, None),
+            Err(Error::MalformedMoveBlob(_))
+        ));
     }
 
     #[test]

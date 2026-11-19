@@ -6,7 +6,7 @@ use crate::{
     AppState,
 };
 
-fn blocking<T: Send + 'static>(
+pub(super) fn blocking<T: Send + 'static>(
     work: impl FnOnce() -> Result<T> + Send + 'static,
 ) -> impl std::future::Future<Output = Result<T>> {
     let handle = tauri::async_runtime::spawn_blocking(work);

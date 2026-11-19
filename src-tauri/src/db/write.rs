@@ -10,7 +10,7 @@ use diesel::{connection::SimpleConnection, prelude::*};
 
 use super::{
     cache, core, game_index,
-    models::{NewGame, UpdateGame},
+    models::UpdateGame,
     schema::{games, players},
 };
 use crate::error::{Error, Result};
@@ -20,23 +20,24 @@ const GAMES_DELETE_DUPLICATES: &str =
 
 /// What a writer did to the database.
 #[derive(Debug, Clone, Copy)]
-pub enum Change<'a> {
+pub enum Change {
     /// Games were inserted (a bulk import or a single game).
     GamesInserted,
-    /// These games were edited in place.
-    GamesEdited(&'a [i32]),
+    /// One game was edited in place; only the rows it referenced before can
+    /// have become orphans.
+    GameEdited(i32, GameRows),
     /// Games were deleted.
     GamesDeleted,
     /// One game was deleted: only its own players, event and site can have
     /// become orphans.
-    GameDeleted(DeletedGame),
+    GameDeleted(GameRows),
     /// One player's games were moved to another and the player row removed.
     PlayersMerged,
 }
 
-/// The rows a deleted game referenced.
+/// The players, event and site a game references.
 #[derive(Debug, Clone, Copy)]
-pub struct DeletedGame {
+pub struct GameRows {
     white: i32,
     black: i32,
     event: i32,
@@ -46,7 +47,7 @@ pub struct DeletedGame {
 /// Runs `write` and then what `change` owes, in one transaction.
 pub fn apply<T>(
     conn: &mut SqliteConnection,
-    change: Change<'_>,
+    change: Change,
     write: impl FnOnce(&mut SqliteConnection) -> Result<T>,
 ) -> Result<T> {
     let out = conn.transaction::<_, Error, _>(|conn| {
@@ -62,7 +63,6 @@ pub fn apply<T>(
     Ok(out)
 }
 
-#[allow(clippy::redundant_field_names)]
 /// The file `conn` is connected to; none for an in-memory database.
 fn database_file(conn: &mut SqliteConnection) -> Option<std::path::PathBuf> {
     #[derive(QueryableByName)]
@@ -82,18 +82,19 @@ fn database_file(conn: &mut SqliteConnection) -> Option<std::path::PathBuf> {
 
 /// The derived data a change owes inside the transaction. (The per-file
 /// cache invalidation runs in `apply`, once the transaction has committed.)
-fn settle(conn: &mut SqliteConnection, change: Change<'_>) -> Result<()> {
+fn settle(conn: &mut SqliteConnection, change: Change) -> Result<()> {
     match change {
         // A skipped duplicate can leave an orphan; sweeping every row of a
         // large import for it costs more than it is worth, so only count.
         Change::GamesInserted => {}
-        Change::GamesEdited(ids) => {
-            for &id in ids {
-                game_index::reindex_game(conn, id)?;
-            }
-            sweep_orphans(conn)?
+        Change::GameEdited(id, before) => {
+            game_index::reindex_game(conn, id)?;
+            sweep_orphans_of(conn, before)?
         }
-        Change::GamesDeleted | Change::PlayersMerged => sweep_orphans(conn)?,
+        Change::GamesDeleted => sweep_orphans(conn)?,
+        // The merged player's row is deleted by the merge itself and no other
+        // row loses its last game.
+        Change::PlayersMerged => {}
         Change::GameDeleted(game) => sweep_orphans_of(conn, game)?,
     }
     core::refresh_info_counts(conn)
@@ -115,7 +116,7 @@ fn sweep_orphans(conn: &mut SqliteConnection) -> Result<()> {
 }
 
 /// [`sweep_orphans`] for the rows one deleted game referenced.
-fn sweep_orphans_of(conn: &mut SqliteConnection, game: DeletedGame) -> Result<()> {
+fn sweep_orphans_of(conn: &mut SqliteConnection, game: GameRows) -> Result<()> {
     use diesel::sql_types::Integer;
     diesel::sql_query(
         "
@@ -141,21 +142,8 @@ fn sweep_orphans_of(conn: &mut SqliteConnection, game: DeletedGame) -> Result<()
     Ok(())
 }
 
-/// Adds one game and returns its row. Bulk imports go through `apply` instead.
-#[allow(dead_code)]
-pub fn add_game(conn: &mut SqliteConnection, game: NewGame) -> Result<super::models::Game> {
-    apply(conn, Change::GamesInserted, |conn| {
-        core::add_game(conn, game)
-    })
-}
-
-pub fn update_game(conn: &mut SqliteConnection, id: i32, data: &UpdateGame) -> Result<()> {
-    apply(conn, Change::GamesEdited(&[id]), |conn| {
-        core::update_game(conn, id, data)
-    })
-}
-
-pub fn remove_game(conn: &mut SqliteConnection, id: i32) -> Result<()> {
+/// The rows `id` references, if the game exists.
+fn game_rows(conn: &mut SqliteConnection, id: i32) -> Result<Option<GameRows>> {
     let row: Option<(i32, i32, i32, i32)> = games::table
         .filter(games::id.eq(id))
         .select((
@@ -166,14 +154,24 @@ pub fn remove_game(conn: &mut SqliteConnection, id: i32) -> Result<()> {
         ))
         .first(conn)
         .optional()?;
-    let Some((white, black, event, site)) = row else {
-        return Ok(());
-    };
-    let game = DeletedGame {
+    Ok(row.map(|(white, black, event, site)| GameRows {
         white,
         black,
         event,
         site,
+    }))
+}
+
+pub fn update_game(conn: &mut SqliteConnection, id: i32, data: &UpdateGame) -> Result<()> {
+    let before = game_rows(conn, id)?.ok_or(diesel::result::Error::NotFound)?;
+    apply(conn, Change::GameEdited(id, before), |conn| {
+        core::update_game(conn, id, data)
+    })
+}
+
+pub fn remove_game(conn: &mut SqliteConnection, id: i32) -> Result<()> {
+    let Some(game) = game_rows(conn, id)? else {
+        return Ok(());
     };
     apply(conn, Change::GameDeleted(game), |conn| {
         diesel::delete(games::table.filter(games::id.eq(id))).execute(conn)?;
@@ -327,13 +325,52 @@ mod tests {
         assert_counts_right(&mut conn);
     }
 
+    fn player_names(conn: &mut SqliteConnection) -> Vec<String> {
+        names(conn).0
+    }
+
+    #[test]
+    fn saving_a_game_leaves_unrelated_orphan_rows_alone() {
+        let db = TempDb::new("edit-orphans");
+        let mut conn = db.open();
+        let a = seed_game(&mut conn, "Alice", "Bob", "Open");
+        create_player(&mut conn, "Nobody").unwrap();
+        update_game(&mut conn, a, &update_for("Alice", "Carol")).unwrap();
+        // Bob lost his last game and goes; Nobody was never part of this edit.
+        assert_eq!(
+            player_names(&mut conn),
+            ["Unknown", "Alice", "Nobody", "Carol"]
+        );
+    }
+
+    #[test]
+    fn merging_players_leaves_unrelated_orphan_rows_alone() {
+        let db = TempDb::new("merge-orphans");
+        let mut conn = db.open();
+        seed_game(&mut conn, "Alice", "Bob", "Open");
+        seed_game(&mut conn, "Carol", "Dave", "Cup");
+        let nobody = create_player(&mut conn, "Nobody").unwrap().id;
+        let (alice, carol): (i32, i32) = (
+            create_player(&mut conn, "Alice").unwrap().id,
+            create_player(&mut conn, "Carol").unwrap().id,
+        );
+        merge_players(&mut conn, alice, carol).unwrap();
+        let left: i64 = players::table
+            .filter(players::id.eq(nobody))
+            .count()
+            .get_result(&mut conn)
+            .unwrap();
+        assert_eq!(left, 1);
+        assert_counts_right(&mut conn);
+    }
+
     #[test]
     fn adding_a_single_game_updates_the_stored_game_count() {
         let db = TempDb::new("add");
         let mut conn = db.open();
         let white = create_player(&mut conn, "Alice").unwrap().id;
         let black = create_player(&mut conn, "Bob").unwrap().id;
-        let game = NewGame {
+        let game = crate::db::models::NewGame {
             event_id: 0,
             site_id: 0,
             date: Some("2026.01.01"),
@@ -355,7 +392,10 @@ mod tests {
             moves: &[0u8],
             pawn_home: 0,
         };
-        add_game(&mut conn, game).unwrap();
+        apply(&mut conn, Change::GamesInserted, |conn| {
+            core::add_game(conn, game)
+        })
+        .unwrap();
         assert_eq!(info_value(&mut conn, "GameCount").as_deref(), Some("1"));
         assert_counts_right(&mut conn);
     }
@@ -567,6 +607,29 @@ mod tests {
             "{}",
             game.moves
         );
+    }
+
+    #[test]
+    fn a_game_from_a_fen_keeps_its_moves_when_saved_as_the_boards_full_pgn() {
+        let db = TempDb::new("fen-full-pgn");
+        let mut conn = db.open();
+        let id = seed_game(&mut conn, "Alice", "Bob", "Open");
+        diesel::update(games::table)
+            .set((
+                games::white_material.eq(0),
+                games::black_material.eq(0),
+                games::pawn_home.eq(0),
+            ))
+            .execute(&mut conn)
+            .unwrap();
+        // What `save()` in tabSession.ts sends: headers with its own [FEN], then movetext.
+        let pgn = format!(
+            "[Event \"Open\"]\n[Site \"?\"]\n[Date \"????.??.??\"]\n[Round \"?\"]\n[White \"Alice\"]\n[Black \"Bob\"]\n[Result \"*\"]\n[SetUp \"1\"]\n[FEN \"{KPK_FEN}\"]\n\n1. e4 Kd7 2. e5 *\n\n"
+        );
+        update_game(&mut conn, id, &update_with(KPK_FEN, &pgn)).unwrap();
+        let game = core::get_game(&mut conn, id).unwrap();
+        assert_eq!(game.ply_count, Some(3));
+        assert_eq!(stored_fen(&mut conn, id).as_deref(), Some(KPK_FEN));
     }
 
     #[test]

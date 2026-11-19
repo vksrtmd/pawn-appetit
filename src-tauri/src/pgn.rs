@@ -280,7 +280,21 @@ pub async fn read_games(
     end: i32,
     state: tauri::State<'_, AppState>,
 ) -> Result<Vec<String>, Error> {
-    Ok(read_range(&file, start as usize, end as usize, &state)?)
+    Ok(read_games_between(&file, start, end, &state)?)
+}
+
+/// The games `start..=end` of `file`; none when the range is empty or starts below 0
+/// (an empty file asks for `0..=-1`).
+fn read_games_between(
+    file: &Path,
+    start: i32,
+    end: i32,
+    state: &AppState,
+) -> io::Result<Vec<String>> {
+    if start < 0 || end < start {
+        return Ok(Vec::new());
+    }
+    read_range(file, start as usize, end as usize, state)
 }
 
 #[tauri::command]
@@ -398,6 +412,20 @@ mod tests {
         let state = AppState::default();
         splice_game(&path, 0, Some(&game_n(0)), &state).unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), game_n(0));
+    }
+
+    #[test]
+    fn an_empty_range_reads_no_games() {
+        let (_d, path) = pgn_file("");
+        let state = AppState::default();
+        assert!(read_games_between(&path, 0, -1, &state).unwrap().is_empty());
+        assert!(read_games_between(&path, 0, -5, &state).unwrap().is_empty());
+        let (_d, path) = pgn_file(&games(3));
+        assert!(read_games_between(&path, 2, 1, &state).unwrap().is_empty());
+        assert_eq!(
+            read_games_between(&path, 1, 1, &state).unwrap(),
+            vec![game_n(1)]
+        );
     }
 
     #[test]

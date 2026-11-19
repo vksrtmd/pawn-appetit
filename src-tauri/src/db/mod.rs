@@ -103,7 +103,32 @@ pub(crate) fn import_pgn(
     on_progress: impl FnMut(usize),
 ) -> Result<()> {
     let db_exists = db_path.exists();
-    let db = &mut ConnectionOptions::import().connect(db_path.to_str().unwrap())?;
+    let result = import_into(
+        file,
+        db_path,
+        db_exists,
+        timestamp,
+        title,
+        description,
+        on_progress,
+    );
+    if result.is_err() && !db_exists {
+        // A half-built file, written without a journal, is not a database.
+        let _ = std::fs::remove_file(db_path);
+    }
+    result
+}
+
+fn import_into(
+    file: &std::path::Path,
+    db_path: &std::path::Path,
+    db_exists: bool,
+    timestamp: Option<i32>,
+    title: &str,
+    description: &str,
+    on_progress: impl FnMut(usize),
+) -> Result<()> {
+    let db = &mut ConnectionOptions::import(!db_exists).connect(db_path.to_str().unwrap())?;
 
     if !db_exists {
         core::init_db(db, title, description)?;
@@ -203,12 +228,14 @@ pub async fn get_db_info(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn create_indexes(file: PathBuf, state: tauri::State<'_, AppState>) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
-
-    db.batch_execute(INDEXES_SQL)?;
-
-    Ok(())
+pub async fn create_indexes(file: PathBuf, app: tauri::AppHandle) -> Result<()> {
+    maintenance::blocking(move || {
+        let state = app.state::<AppState>();
+        let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
+        db.batch_execute(INDEXES_SQL)?;
+        Ok(())
+    })
+    .await
 }
 
 #[tauri::command]
@@ -966,16 +993,13 @@ pub async fn get_players_game_info(
 
 #[tauri::command]
 #[specta::specta]
-pub async fn delete_db_game(
-    file: PathBuf,
-    game_id: i32,
-    state: tauri::State<'_, AppState>,
-) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
-
-    write::remove_game(db, game_id)?;
-
-    Ok(())
+pub async fn delete_db_game(file: PathBuf, game_id: i32, app: tauri::AppHandle) -> Result<()> {
+    maintenance::blocking(move || {
+        let state = app.state::<AppState>();
+        let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
+        write::remove_game(db, game_id)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -996,13 +1020,14 @@ pub async fn update_game(
     file: PathBuf,
     game_id: i32,
     update: UpdateGame,
-    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
-
-    write::update_game(db, game_id, &update)?;
-
-    Ok(())
+    maintenance::blocking(move || {
+        let state = app.state::<AppState>();
+        let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
+        write::update_game(db, game_id, &update)
+    })
+    .await
 }
 
 #[tauri::command]
@@ -1011,11 +1036,14 @@ pub async fn merge_players(
     file: PathBuf,
     player1: i32,
     player2: i32,
-    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<()> {
-    let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
-
-    write::merge_players(db, player1, player2)
+    maintenance::blocking(move || {
+        let state = app.state::<AppState>();
+        let db = &mut get_db_or_create(&state, file.to_str().unwrap())?;
+        write::merge_players(db, player1, player2)
+    })
+    .await
 }
 
 #[cfg(test)]
