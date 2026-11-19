@@ -432,7 +432,7 @@ export function getBestMoves(
     options: EngineOptions,
 ): Promise<[number, BestMoves[]] | null> {
     return commands
-        .getBestMoves(engine.name, engine.path, tab, goMode, options)
+        .getBestMoves(engine.name, engine.path, tab, goMode, options, null)
         .then((r) => unwrap(r));
 }
 

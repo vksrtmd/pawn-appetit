@@ -1,4 +1,5 @@
-import type { GoMode } from "@/bindings";
+import { parseUci } from "chessops";
+import type { BestMovesPayload, GoMode } from "@/bindings";
 import type { TimeType } from "@/components/TimeInput";
 import type { TimeControlField } from "@/utils/clock";
 import type { EngineSettings, LocalEngine } from "@/utils/engines";
@@ -75,4 +76,15 @@ export function copyTimeControl<T extends PlayerSettings>(from: PlayerSettings, 
         timeUnit: from.timeUnit,
         incrementUnit: from.incrementUnit,
     };
+}
+
+/**
+ * The move an engine game plays for an engine event: the engine's own `bestmove` of the final
+ * payload (so strength limits take effect), else the first move of its top line. Only the final
+ * payload (progress 100) counts; an empty result gives `undefined`.
+ */
+export function engineMoveFromPayload(payload: BestMovesPayload) {
+    if (payload.progress < 100) return undefined;
+    const uci = payload.bestmove ?? payload.bestLines[0]?.uciMoves[0];
+    return uci ? parseUci(uci) : undefined;
 }

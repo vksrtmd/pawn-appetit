@@ -106,7 +106,7 @@ function PracticeBoard({
         ],
       };
 
-      commands.getBestMoves(engine.name, engine.path, engineTabRef.current, goMode, options);
+      commands.getBestMoves(engine.name, engine.path, engineTabRef.current, goMode, options, null);
     } catch (error) {
       console.error("Engine move failed:", error);
       engineThinkingRef.current = false;

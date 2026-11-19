@@ -16,6 +16,7 @@ import { match } from "ts-pattern";
 import { commands, type Outcome, type Score, type Token } from "@/bindings";
 import { ANNOTATION_INFO, type Annotation, isBasicAnnotation, NAG_INFO } from "./annotation";
 import { parseSanOrUci, positionFromFen } from "./chessops";
+import { PgnParseError } from "./pgnParseError";
 import { harmonicMean, isPrefix, mean } from "./misc";
 import { formatScore, getAccuracy, getCPLoss, INITIAL_SCORE } from "./score";
 import {
@@ -151,7 +152,7 @@ export function getMoveText(
         }
 
         if (opt.comments && tree.comment !== "") {
-            content += tree.comment;
+            content += escapeComment(tree.comment);
         }
         content += "} ";
 
@@ -235,17 +236,25 @@ function parseRatingTag(value: string | undefined): number | undefined {
     return rating > 0 && rating <= MAX_RATING ? rating : 0;
 }
 
+const escapeHeader = (value: string) => value.replace(/[\\"]/g, "\\$&");
+const unescapeHeader = (value: string) => value.replace(/\\([\\"])/g, "$1");
+// A PGN comment ends at the first `}` and has no escape, so the app writes `}` as \u007d and reads
+// that back. Other backslashes stay as they are, as in any other program's PGN.
+const escapeComment = (text: string) => text.replace(/}/g, "\\u007d");
+const unescapeComment = (text: string) => text.replaceAll("\\u007d", "}");
+
 export function headersToPGN(game: GameHeaders): string {
-    let headers = `[Event "${game.event || "?"}"]
-[Site "${game.site || "?"}"]
-[Date "${game.date || "????.??.??"}"]
-[Round "${game.round || "?"}"]
-[White "${game.white || "?"}"]
-[Black "${game.black || "?"}"]
-[Result "${game.result}"]
+    const e = escapeHeader;
+    let headers = `[Event "${e(game.event || "?")}"]
+[Site "${e(game.site || "?")}"]
+[Date "${e(game.date || "????.??.??")}"]
+[Round "${e(game.round || "?")}"]
+[White "${e(game.white || "?")}"]
+[Black "${e(game.black || "?")}"]
+[Result "${e(game.result)}"]
 `;
     if (game.time) {
-        headers += `[UTCTime "${game.time}"]\n`;
+        headers += `[UTCTime "${e(game.time)}"]\n`;
     }
     if (game.white_elo != null) {
         headers += `[WhiteElo "${formatRatingTag(game.white_elo)}"]\n`;
@@ -257,26 +266,26 @@ export function headersToPGN(game: GameHeaders): string {
         headers += `[Start "${JSON.stringify(game.start)}"]\n`;
     }
     if (game.orientation) {
-        headers += `[Orientation "${game.orientation}"]\n`;
+        headers += `[Orientation "${e(game.orientation)}"]\n`;
     }
     if (game.time_control) {
-        headers += `[TimeControl "${game.time_control}"]\n`;
+        headers += `[TimeControl "${e(game.time_control)}"]\n`;
     }
     if (game.white_time_control) {
-        headers += `[WhiteTimeControl "${game.white_time_control}"]\n`;
+        headers += `[WhiteTimeControl "${e(game.white_time_control)}"]\n`;
     }
     if (game.black_time_control) {
-        headers += `[BlackTimeControl "${game.black_time_control}"]\n`;
+        headers += `[BlackTimeControl "${e(game.black_time_control)}"]\n`;
     }
     if (game.eco) {
-        headers += `[ECO "${game.eco}"]\n`;
+        headers += `[ECO "${e(game.eco)}"]\n`;
     }
     if (game.variant) {
-        headers += `[Variant "${game.variant}"]\n`;
+        headers += `[Variant "${e(game.variant)}"]\n`;
     }
     for (const [key, value] of Object.entries(game.other ?? {})) {
         if (key === "ECO" && game.eco) continue;
-        headers += `[${key} "${value}"]\n`;
+        headers += `[${key} "${e(value)}"]\n`;
     }
     return headers;
 }
@@ -645,7 +654,7 @@ function innerParsePGN(
         const token = tokens[i];
 
         if (token.type === "Comment") {
-            const comment = parseComment(token.value);
+            const comment = parseComment(unescapeComment(token.value));
 
             if (comment.evaluation) {
                 if (isPawns(comment.evaluation)) {
@@ -752,8 +761,7 @@ function innerParsePGN(
             const sanValue = token.value;
             const move = parseSanOrUci(pos, sanValue);
             if (!move) {
-                i++;
-                continue;
+                throw new PgnParseError(sanValue, root.halfMoves + 1);
             }
             const san = makeSan(pos, move);
             pos.play(move);
@@ -782,6 +790,11 @@ function innerParsePGN(
     }
 
     return tree;
+}
+
+/** The headers of a PGN game, read without parsing its moves, so an unreadable move can't fail it. */
+export async function parseHeaders(pgn: string): Promise<GameHeaders> {
+    return getPgnHeaders(unwrap(await commands.lexPgn(pgn)));
 }
 
 export async function parsePGN(
@@ -819,7 +832,7 @@ export function getPgnHeaders(tokens: Token[]): GameHeaders {
     for (const token of tokens) {
         if (token.type === "Header") {
             const { tag, value } = token.value;
-            headersN.set(tag, value);
+            headersN.set(tag, unescapeHeader(value));
         } else if (token.type === "Outcome") {
             headersN.set("Result", token.value);
         }

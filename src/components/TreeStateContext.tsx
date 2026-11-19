@@ -1,4 +1,5 @@
-import { createContext, useMemo } from "react";
+import { createContext, useEffect, useMemo } from "react";
+import { registerTabStore } from "@/state/tabSession";
 import { createTreeStore, type TreeStore } from "@/state/store/tree";
 import type { TreeState } from "@/utils/treeReducer";
 
@@ -14,6 +15,8 @@ export function TreeStateProvider({
   children: React.ReactNode;
 }) {
   const store = useMemo(() => createTreeStore(id, initial), [id, initial]);
+
+  useEffect(() => (id ? registerTabStore(id, store) : undefined), [id, store]);
 
   return <TreeStateContext.Provider value={store}>{children}</TreeStateContext.Provider>;
 }

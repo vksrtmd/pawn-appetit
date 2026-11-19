@@ -6,7 +6,7 @@ import type { AppCommand } from "@/app/commands";
 import { getCachedFileIndex } from "@/features/files/utils/file";
 import { getDocumentDir } from "@/utils/documentDir";
 import { openFile } from "@/utils/files";
-import type { Tab } from "@/utils/tabs";
+import type { Tab } from "@/utils/tabSchema";
 
 type SearchResultGroup =
   | "Commands"

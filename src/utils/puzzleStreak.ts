@@ -6,7 +6,7 @@ function pad2(n: number) {
     return n < 10 ? `0${n}` : String(n);
 }
 
-function dateKey(d = new Date()): string {
+export function dateKey(d = new Date()): string {
     const year = d.getFullYear();
     const month = pad2(d.getMonth() + 1);
     const day = pad2(d.getDate());

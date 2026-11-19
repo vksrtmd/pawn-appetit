@@ -20,6 +20,7 @@ import { useStore } from "zustand";
 import { TreeStateContext } from "@/components/TreeStateContext";
 import { currentPgnOptionsAtom } from "@/state/atoms";
 import { getPGN, parsePGN } from "@/utils/chess";
+import { notifyPgnParseError } from "@/utils/pgnParseError";
 
 function PgnInput() {
   const store = useContext(TreeStateContext)!;
@@ -92,7 +93,13 @@ function PgnInput() {
   );
 
   async function updatePgn() {
-    const tree = await parsePGN(tmp);
+    let tree: Awaited<ReturnType<typeof parsePGN>>;
+    try {
+      tree = await parsePGN(tmp);
+    } catch (e) {
+      if (!notifyPgnParseError(e)) throw e;
+      return;
+    }
     tree.dirty = true;
     tree.position = [];
 

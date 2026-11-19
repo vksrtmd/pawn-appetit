@@ -94,6 +94,10 @@ impl EngineLifecycle {
         true
     }
 
+    pub fn is_stopping(&self) -> bool {
+        self.state == EngineSessionState::Stopping
+    }
+
     pub fn begin_shutdown(&mut self) -> bool {
         if self.state == EngineSessionState::Stopped {
             return false;

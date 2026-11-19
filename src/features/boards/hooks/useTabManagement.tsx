@@ -1,63 +1,22 @@
-import { Text } from "@mantine/core";
 import { useHotkeys } from "@mantine/hooks";
-import { modals } from "@mantine/modals";
 import { notifications } from "@mantine/notifications";
 import { useLoaderData } from "@tanstack/react-router";
 import { useAtom, useAtomValue } from "jotai";
-import { useCallback, useContext, useEffect } from "react";
+import { useCallback, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { commands } from "@/bindings";
-import { TreeStateContext } from "@/components/TreeStateContext";
 import { MAX_TABS } from "@/features/boards/constants";
-import { activeTabAtom, currentTabAtom, tabsAtom } from "@/state/atoms";
+import { activeTabAtom, tabsAtom } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
-import { deserializeStorageValue } from "@/utils/tabStateStorage";
-import { createTab, genID, saveToFile } from "@/utils/tabs";
-import { unwrap } from "@/utils/unwrap";
-
-function isValidTabState(value: unknown): value is { version: number; state: { dirty?: boolean } } {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "version" in value &&
-    typeof value.version === "number" &&
-    "state" in value &&
-    typeof value.state === "object" &&
-    value.state !== null
-  );
-}
-
-function getTabState(tabId: string): { version: number; state: { dirty?: boolean } } | null {
-  try {
-    const rawState = sessionStorage.getItem(tabId);
-    if (!rawState) {
-      return null;
-    }
-
-    const parsedState = deserializeStorageValue<{ version: number; state: { dirty?: boolean } }>(
-      rawState,
-    );
-
-    if (isValidTabState(parsedState)) {
-      return parsedState;
-    }
-
-    console.warn(`Invalid tab state structure for tab: ${tabId}`);
-    return null;
-  } catch (error) {
-    console.error(`Failed to retrieve tab state for tab: ${tabId}`, error);
-    return null;
-  }
-}
+import { requestCloseTab } from "@/state/tabClose";
+import { closeTab as closeTabNow, duplicate } from "@/state/tabSession";
+import { createTab } from "@/utils/tabs";
 
 export function useTabManagement() {
   const { t } = useTranslation();
   const [tabs, setTabs] = useAtom(tabsAtom);
   const [activeTab, setActiveTab] = useAtom(activeTabAtom);
-  const [currentTab, setCurrentTab] = useAtom(currentTabAtom);
-  const { documentDir } = useLoaderData({ from: "/boards" });
 
-  const store = useContext(TreeStateContext);
+  const { documentDir } = useLoaderData({ from: "/boards" });
 
   useEffect(() => {
     if (tabs.length === 0) {
@@ -71,76 +30,11 @@ export function useTabManagement() {
 
   const closeTab = useCallback(
     async (value: string | null, forced?: boolean) => {
-      if (value !== null) {
-        const tabState = getTabState(value);
-
-        let hasSource = false;
-        setTabs((prevTabs) => {
-          const closedTab = prevTabs.find((tab) => tab.value === value);
-          hasSource = !!closedTab?.source;
-          return prevTabs;
-        });
-
-        if (tabState?.state?.dirty && hasSource && !forced && store) {
-          modals.openConfirmModal({
-            title: t("common.unsavedChanges.title"),
-            withCloseButton: false,
-            children: <Text>{t("common.unsavedChanges.desc")}</Text>,
-            labels: {
-              confirm: t("common.unsavedChanges.saveAndClose"),
-              cancel: t("common.unsavedChanges.closeWithoutSaving"),
-            },
-            onConfirm: async () => {
-              try {
-                await saveToFile({
-                  dir: documentDir,
-                  setCurrentTab,
-                  tab: currentTab,
-                  store,
-                });
-              } catch {
-                // The failed write was already reported; keep the tab open so the edits survive.
-                return;
-              }
-              closeTab(value, true);
-            },
-            onCancel: () => {
-              closeTab(value, true);
-            },
-          });
-          return;
-        }
-
-        setTabs((prevTabs) => {
-          const index = prevTabs.findIndex((tab) => tab.value === value);
-          if (index === -1) return prevTabs;
-
-          const newTabs = prevTabs.filter((tab) => tab.value !== value);
-
-          setActiveTab((currentActiveTab) => {
-            if (value === currentActiveTab) {
-              if (newTabs.length === 0) {
-                return null;
-              }
-              if (index === prevTabs.length - 1) {
-                return newTabs[index - 1].value;
-              }
-              return newTabs[index].value;
-            }
-            return currentActiveTab;
-          });
-
-          return newTabs;
-        });
-
-        try {
-          unwrap(await commands.killEngines(value));
-        } catch (error) {
-          console.error(`Failed to kill engines for tab: ${value}`, error);
-        }
-      }
+      if (value === null) return;
+      if (forced) return closeTabNow(value);
+      return requestCloseTab(value, { dir: documentDir, t, close: () => closeTabNow(value) });
     },
-    [setTabs, setActiveTab, documentDir, currentTab, setCurrentTab, store, t],
+    [documentDir, t],
   );
 
   const selectTab = useCallback(
@@ -192,41 +86,12 @@ export function useTabManagement() {
     [setTabs],
   );
 
-  const duplicateTab = useCallback(
-    (value: string) => {
-      const id = genID();
-      setTabs((prevTabs) => {
-        const tab = prevTabs.find((tab) => tab.value === value);
-
-        try {
-          const existingState = sessionStorage.getItem(value);
-          if (existingState) {
-            sessionStorage.setItem(id, existingState);
-          }
-        } catch (error) {
-          console.error(`Failed to duplicate tab state from ${value} to ${id}`, error);
-        }
-
-        if (tab) {
-          setActiveTab(id);
-          return [
-            ...prevTabs,
-            {
-              name: tab.name,
-              value: id,
-              type: tab.type,
-            },
-          ];
-        }
-        return prevTabs;
-      });
-    },
-    [setTabs, setActiveTab],
-  );
+  const duplicateTab = useCallback((value: string) => {
+    duplicate(value);
+  }, []);
 
   const keyMap = useAtomValue(keyMapAtom);
   useHotkeys([
-    [keyMap.CLOSE_BOARD_TAB.keys, () => closeTab(activeTab, true)],
     [keyMap.CYCLE_BOARD_TABS.keys, () => cycleTabs()],
     [keyMap.REVERSE_CYCLE_BOARD_TABS.keys, () => cycleTabs(true)],
     [keyMap.BOARD_TAB_ONE.keys, () => selectTab(0)],

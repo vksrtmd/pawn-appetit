@@ -6,8 +6,8 @@ import {
     openFile,
     openFileAndRemember,
 } from "../files";
+import { PgnParseError } from "../pgnParseError";
 import { getRecentFiles } from "../recentFiles";
-import { deserializeStorageValue } from "../tabStateStorage";
 
 const mocks = vi.hoisted(() => ({
     countPgnGames: vi.fn<() => Promise<{ status: "ok"; data: number }>>(),
@@ -18,7 +18,11 @@ const mocks = vi.hoisted(() => ({
     createTab: vi.fn<() => Promise<string>>(),
     parsePGN: vi.fn<() => Promise<{ headers: { event: string } }>>(),
     exists: vi.fn<() => Promise<boolean>>(),
+    notify: vi.fn<(options: unknown) => void>(),
 }));
+
+vi.mock("@mantine/notifications", () => ({ notifications: { show: mocks.notify } }));
+vi.mock("i18next", () => ({ default: { t: (key: string) => key } }));
 
 vi.mock("@/bindings", () => ({
     commands: {
@@ -28,6 +32,7 @@ vi.mock("@/bindings", () => ({
 }));
 
 vi.mock("@/features/files/utils/file", () => ({
+    infoPathFor: (path: string) => path.replace(/\.pgn$/, ".info"),
     invalidateFileIndex: vi.fn<() => void>(),
 }));
 
@@ -99,10 +104,11 @@ describe("openFile", () => {
             }),
         );
         expect(mocks.parsePGN).toHaveBeenCalledWith('[Event "First"]\n\n1. e4 e5 *\n\n');
-        expect(deserializeStorageValue(sessionStorage.getItem("tab-1") ?? "")).toEqual({
-            version: 0,
-            state: { headers: { event: "First" } },
-        });
+        // The tree goes into createTab, which stores it before the tab is added
+        expect(mocks.createTab).toHaveBeenCalledWith(
+            expect.objectContaining({ tree: { headers: { event: "First" } } }),
+        );
+        expect(sessionStorage.length).toBe(0);
     });
 
     test("records a recent PGN after a successful open", async () => {
@@ -173,5 +179,23 @@ describe("file lastModified is epoch seconds", () => {
         const file = await createTempImportFile("*");
 
         expect(file.lastModified).toBe(NOW_S);
+    });
+});
+
+describe("openFile with an illegal move", () => {
+    test("shows the error and opens no tab", async () => {
+        vi.clearAllMocks();
+        mocks.countPgnGames.mockResolvedValue({ status: "ok", data: 1 });
+        mocks.readGames.mockResolvedValue({ status: "ok", data: ["1. e4 e5 2. Qh8 *"] });
+        mocks.exists.mockResolvedValue(false);
+        mocks.parsePGN.mockRejectedValue(new PgnParseError("Qh8", 3));
+        const setTabs = vi.fn<() => void>();
+
+        const opened = await openFileAndRemember("/docs/bad.pgn", setTabs, vi.fn<() => void>());
+
+        expect(opened).toBeUndefined();
+        expect(mocks.createTab).not.toHaveBeenCalled();
+        expect(getRecentFiles().map((f) => f.path)).not.toContain("/docs/bad.pgn");
+        expect(mocks.notify).toHaveBeenCalledWith(expect.objectContaining({ color: "red" }));
     });
 });

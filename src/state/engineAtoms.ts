@@ -5,6 +5,7 @@ import equal from "fast-deep-equal";
 import { atom } from "jotai";
 import { atomWithStorage } from "jotai/utils";
 import { atomFamily } from "jotai-family";
+import { tabAtomFamily } from "./tabAtoms";
 import type { BestMoves, GoMode } from "@/bindings";
 import { positionFromFen, swapMove } from "@/utils/chessops";
 import { type Engine, type EngineSettings, engineSchema } from "@/utils/engines";
@@ -26,18 +27,18 @@ export const reportTypeAtom = atom<"CP" | "WDL">("CP");
 export const scoreTypeFamily = atomFamily((_engine: string) => atom<"cp" | "wdl">("cp"));
 
 // Per-engine-tab move/progress atoms
-export const engineMovesFamily = atomFamily(
+export const engineMovesFamily = tabAtomFamily(
     (_: { tab: string; engine: string }) => atom<Map<string, BestMoves[]>>(new Map()),
-    (a, b) => a.tab === b.tab && a.engine === b.engine,
+    { tabOf: (p) => p.tab, areEqual: (a, b) => a.tab === b.tab && a.engine === b.engine },
 );
 
-export const engineProgressFamily = atomFamily(
+export const engineProgressFamily = tabAtomFamily(
     (_: { tab: string; engine: string }) => atom<number>(0),
-    (a, b) => a.tab === b.tab && a.engine === b.engine,
+    { tabOf: (p) => p.tab, areEqual: (a, b) => a.tab === b.tab && a.engine === b.engine },
 );
 
 // Per-engine-tab settings (enabled state, go mode, uci options)
-export const tabEngineSettingsFamily = atomFamily(
+export const tabEngineSettingsFamily = tabAtomFamily(
     ({
         defaultSettings,
         defaultGo,
@@ -59,7 +60,7 @@ export const tabEngineSettingsFamily = atomFamily(
             synced: true,
         });
     },
-    (a, b) => a.tab === b.tab && a.engineName === b.engineName,
+    { tabOf: (p) => p.tab, areEqual: (a, b) => a.tab === b.tab && a.engineName === b.engineName },
 );
 
 // Aggregate enable/disable atoms
@@ -98,6 +99,36 @@ export const enableAllAtom = atom(null, (get, set, value: boolean) => {
     }
 });
 
+/**
+ * The lines to draw as arrows for a position: the threat lines (searched with the side to move
+ * swapped) when there are any, else the lines of the position itself. Win chances and the
+ * 10-point cut-off are taken from the side to move of the position the lines belong to.
+ */
+export function arrowLines(
+    engineMoves: Map<string, BestMoves[]>,
+    fen: string,
+    gameMoves: string[],
+): { pv: string[]; winChance: number }[] | null {
+    const [pos] = positionFromFen(fen);
+    let finalFen = INITIAL_FEN;
+    if (pos) {
+        for (const move of gameMoves) {
+            pos.play(parseUci(move)!);
+        }
+        finalFen = makeFen(pos.toSetup());
+    }
+    const threat = engineMoves.get(`${swapMove(finalFen)}:`);
+    const moves = threat?.length ? threat : engineMoves.get(`${fen}:${gameMoves.join(",")}`);
+    if (!moves?.length) return null;
+    const turn = pos?.turn ?? "white";
+    const color = threat?.length ? (turn === "white" ? "black" : "white") : turn;
+    const winChanceOf = (m: BestMoves) => getWinChance(normalizeScore(m.score.value, color));
+    const best = winChanceOf(moves[0]);
+    return moves
+        .map((m) => ({ pv: m.uciMoves, winChance: winChanceOf(m) }))
+        .filter((m) => best - m.winChance < 10);
+}
+
 // Best moves derived atom (aggregates all engine outputs for a position)
 /** Returns the best moves of each loaded engine for the given FEN + game moves. */
 export const bestMovesFamily = atomFamily(
@@ -111,35 +142,8 @@ export const bestMovesFamily = atomFamily(
             let n = 0;
             for (const engine of engines.data.filter((e) => e.loaded)) {
                 const engineMoves = get(engineMovesFamily({ tab, engine: engine.name }));
-                const [pos] = positionFromFen(fen);
-                let finalFen = INITIAL_FEN;
-                if (pos) {
-                    for (const move of gameMoves) {
-                        const m = parseUci(move);
-                        pos.play(m!);
-                    }
-                    finalFen = makeFen(pos.toSetup());
-                }
-                const moves =
-                    engineMoves.get(`${swapMove(finalFen)}:`) ||
-                    engineMoves.get(`${fen}:${gameMoves.join(",")}`);
-                if (moves && moves.length > 0) {
-                    const bestWinChange = getWinChance(
-                        normalizeScore(moves[0].score.value, pos?.turn || "white"),
-                    );
-                    bestMoves.set(
-                        n,
-                        moves.reduce<{ pv: string[]; winChance: number }[]>((acc, m) => {
-                            const winChance = getWinChance(
-                                normalizeScore(m.score.value, pos?.turn || "white"),
-                            );
-                            if (bestWinChange - winChance < 10) {
-                                acc.push({ pv: m.uciMoves, winChance });
-                            }
-                            return acc;
-                        }, []),
-                    );
-                }
+                const lines = arrowLines(engineMoves, fen, gameMoves);
+                if (lines) bestMoves.set(n, lines);
                 n++;
             }
             return bestMoves;

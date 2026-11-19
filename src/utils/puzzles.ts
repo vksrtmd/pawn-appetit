@@ -77,7 +77,7 @@ async function getFilesFromFilesSection(): Promise<PuzzleDatabaseInfo[]> {
             puzzleFiles.map(async (file) => {
                 const stats = unwrap(await commands.getFileMetadata(file.path));
                 return {
-                    title: file.name.replace(".pgn", ""),
+                    title: file.name.replace(/\.pgn$/, ""),
                     description: "Custom puzzle collection",
                     puzzleCount: unwrap(await commands.countPgnGames(file.path)),
                     storageSize: BigInt(stats.size),

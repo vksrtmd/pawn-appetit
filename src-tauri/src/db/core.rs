@@ -47,7 +47,7 @@ pub fn set_info_value(conn: &mut SqliteConnection, name: &str, value: &str) -> R
 
 /// Writes the row counts of each table to the Info table. Players, events and
 /// sites include the "Unknown" placeholder row.
-pub fn refresh_info_counts(conn: &mut SqliteConnection) -> Result<()> {
+pub(super) fn refresh_info_counts(conn: &mut SqliteConnection) -> Result<()> {
     let counts = [
         ("GameCount", games::table.count().get_result::<i64>(conn)?),
         ("PlayerCount", players::table.count().get_result(conn)?),
@@ -68,7 +68,8 @@ pub struct DbCounts {
 
 /// Counts as stored in the Info table, without the "Unknown" placeholder in
 /// players and events. Databases that never stored them are counted once and
-/// the result is written back.
+/// the result is written back: the one counts refresh outside `write::apply`,
+/// a self-heal of a file that predates the stored counts.
 pub fn db_counts(conn: &mut SqliteConnection) -> Result<DbCounts> {
     let read = |conn: &mut SqliteConnection| -> Result<Option<[i32; 3]>> {
         let mut out = [0; 3];
@@ -102,22 +103,6 @@ pub fn db_counts(conn: &mut SqliteConnection) -> Result<DbCounts> {
     })
 }
 
-/// Removes players, events and sites no game references (keeping the
-/// "Unknown" row, ID 0) and refreshes the stored counts. Run after games are
-/// deleted, not after an edit.
-pub fn delete_orphaned_data(conn: &mut SqliteConnection) -> Result<()> {
-    conn.batch_execute(
-        "
-        DELETE FROM Players WHERE ID != 0 AND ID NOT IN (
-            SELECT WhiteID FROM Games UNION SELECT BlackID FROM Games
-        );
-        DELETE FROM Events WHERE ID != 0 AND ID NOT IN (SELECT EventID FROM Games);
-        DELETE FROM Sites WHERE ID != 0 AND ID NOT IN (SELECT SiteID FROM Games);
-        ",
-    )?;
-    refresh_info_counts(conn)
-}
-
 pub fn normalize_game(
     game: Game,
     white: Player,
@@ -127,8 +112,11 @@ pub fn normalize_game(
 ) -> Result<NormalizedGame> {
     let fen: Fen = game
         .fen
-        .map(|f| Fen::from_ascii(f.as_bytes()).unwrap())
+        .map(|f| Fen::from_ascii(f.as_bytes()))
+        .transpose()?
         .unwrap_or_default();
+
+    let start = Chess::from_setup(fen.clone().into(), CastlingMode::Chess960)?;
 
     Ok(NormalizedGame {
         id: game.id,
@@ -153,16 +141,14 @@ pub fn normalize_game(
         match_fen: None,
         match_next_move: None,
         fen: fen.to_string(),
-        moves: GameTree::from_bytes(
-            &game.moves,
-            Some(Chess::from_setup(fen.into(), CastlingMode::Chess960)?),
-        )?
-        .to_string(),
+        moves: GameTree::from_bytes(&game.moves, Some(start.clone()))?
+            .movetext_from(Some(start))
+            .to_string(),
     })
 }
 
 /// Creates a new game in the database, and returns the game's ID.
-pub fn add_game(conn: &mut SqliteConnection, game: NewGame) -> Result<Game> {
+pub(super) fn add_game(conn: &mut SqliteConnection, game: NewGame) -> Result<Game> {
     use crate::db::schema::games;
 
     Ok(diesel::insert_or_ignore_into(games::table)
@@ -183,27 +169,70 @@ pub fn get_game(conn: &mut SqliteConnection, id: i32) -> Result<NormalizedGame> 
     normalize_game(game, white, black, event, site)
 }
 
-pub fn update_game(conn: &mut SqliteConnection, id: i32, data: &UpdateGame) -> Result<()> {
-    let mut reader = BufferedReader::new_cursor(&data.moves);
-    let mut importer = Importer::new(None);
+/// `pgn` without its leading tag-pair lines. The board sends a whole PGN
+/// (headers, a blank line, movetext); the headers are in `UpdateGame`'s own
+/// fields, and a `[FEN]` among them would end the game's header block early.
+fn without_headers(pgn: &str) -> &str {
+    let mut rest = pgn;
+    while !rest.is_empty() {
+        let (line, tail) = rest.split_once('\n').unwrap_or((rest, ""));
+        let line = line.trim();
+        if !line.is_empty() && !line.starts_with('[') {
+            break;
+        }
+        rest = tail;
+    }
+    rest
+}
 
-    let tree: GameTree = reader
+/// Saves an edited game. Moves are read from the start position `data.fen`
+/// names, so a game that starts from a FEN keeps its moves; `FEN` stays NULL at
+/// the standard start, as the importer stores it. `data.date` and `data.time`
+/// are the date and time the game is shown with (the end ones when it has
+/// them): unchanged, they leave the stored start `Date`/`UTCTime` alone, and
+/// edited, they become the game's date and time with the end ones cleared.
+pub(super) fn update_game(conn: &mut SqliteConnection, id: i32, data: &UpdateGame) -> Result<()> {
+    let start_fen = Fen::from_ascii(data.fen.as_bytes())?;
+    let mut pgn = String::new();
+    if start_fen != Fen::default() {
+        pgn.push_str(&format!("[FEN \"{}\"]\n\n", start_fen));
+    }
+    pgn.push_str(without_headers(&data.moves));
+
+    let mut reader = BufferedReader::new_cursor(&pgn);
+    let mut importer = Importer::new(None);
+    let game = reader
         .read_game(&mut importer)?
         .flatten()
-        .ok_or(crate::error::Error::NoMovesFound)?
-        .tree;
+        .ok_or(crate::error::Error::NoMovesFound)?;
+    let ply_count = game.tree.count_main_line_moves() as i32;
 
-    let mut moves: Vec<u8> = Vec::new();
-    tree.encode(&mut moves, None);
-    let ply_count = tree.count_main_line_moves() as i32;
+    let (stored_date, stored_time, end_date, end_time): (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = games::table
+        .filter(games::id.eq(id))
+        .select((games::date, games::time, games::end_date, games::end_time))
+        .first(conn)?;
+    let shown_date = end_date.clone().or_else(|| stored_date.clone());
+    let shown_time = end_time.clone().or_else(|| stored_time.clone());
+    let (date, time, end_date, end_time) = if data.date == shown_date && data.time == shown_time {
+        (stored_date, stored_time, end_date, end_time)
+    } else {
+        (data.date.clone(), data.time.clone(), None, None)
+    };
 
     diesel::update(games::dsl::games)
         .filter(games::id.eq(id))
         .set((
-            games::fen.eq(&data.fen),
+            games::fen.eq(&game.fen),
             games::event_id.eq(create_event(conn, &data.event)?.id),
-            games::date.eq(&data.date),
-            games::time.eq(&data.time),
+            games::date.eq(date),
+            games::time.eq(time),
+            games::end_date.eq(end_date),
+            games::end_time.eq(end_time),
             games::round.eq(&data.round),
             games::site_id.eq(create_site(conn, &data.site)?.id),
             games::white_id.eq(create_player(conn, &data.white)?.id),
@@ -214,17 +243,11 @@ pub fn update_game(conn: &mut SqliteConnection, id: i32, data: &UpdateGame) -> R
             games::time_control.eq(&data.time_control),
             games::eco.eq(&data.eco),
             games::ply_count.eq(ply_count),
-            games::moves.eq(&moves),
+            games::moves.eq(&game.moves),
         ))
         .execute(conn)?;
 
     Ok(())
-}
-
-pub fn remove_game(conn: &mut SqliteConnection, id: i32) -> Result<()> {
-    diesel::delete(games::table.filter(games::id.eq(id))).execute(conn)?;
-
-    delete_orphaned_data(conn)
 }
 
 #[cfg(test)]
@@ -328,6 +351,18 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn a_game_with_a_bad_stored_fen_is_an_error_not_a_panic() {
+        let mut conn = test_db();
+        seed_game(&mut conn, "Alice", "Bob", "Open");
+        diesel::update(games::table)
+            .set(games::fen.eq("not a fen"))
+            .execute(&mut conn)
+            .unwrap();
+        let id: i32 = games::table.select(games::id).first(&mut conn).unwrap();
+        assert!(get_game(&mut conn, id).is_err());
+    }
+
+    #[test]
     fn init_db_stores_a_title_with_quotes_and_sql() {
         let mut conn = SqliteConnection::establish(":memory:").unwrap();
         let description = r#"it's "x"); DROP TABLE Games; --"#;
@@ -344,22 +379,6 @@ pub(crate) mod tests {
             games::table.count().get_result::<i64>(&mut conn).unwrap(),
             0
         );
-    }
-
-    #[test]
-    fn removing_a_players_only_game_removes_player_event_site_and_updates_counts() {
-        let mut conn = test_db();
-        seed_game(&mut conn, "Alice", "Bob", "Open");
-        let gone = seed_game(&mut conn, "Carol", "Bob", "Cup");
-        remove_game(&mut conn, gone).unwrap();
-        let (p, e, s) = names(&mut conn);
-        assert_eq!(p, ["Unknown", "Alice", "Bob"]);
-        assert_eq!(e, ["Unknown", "Open"]);
-        assert_eq!(s, ["Unknown", "Open site"]);
-        assert_eq!(info_value(&mut conn, "GameCount").as_deref(), Some("1"));
-        assert_eq!(info_value(&mut conn, "PlayerCount").as_deref(), Some("3"));
-        assert_eq!(info_value(&mut conn, "EventCount").as_deref(), Some("2"));
-        assert_eq!(info_value(&mut conn, "SiteCount").as_deref(), Some("2"));
     }
 
     #[test]

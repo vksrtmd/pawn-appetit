@@ -8,7 +8,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands } from "@/bindings";
 import { fontSizeAtom } from "@/state/atoms";
-import { parsePGN } from "@/utils/chess";
+import { parseHeaders } from "@/utils/chess";
 import { getGameName } from "@/utils/treeReducer";
 import { unwrap } from "@/utils/unwrap";
 import * as classes from "./GameSelector.css";
@@ -44,10 +44,15 @@ export default function GameSelector({
     async (startIndex: number, stopIndex: number) => {
       const data = unwrap(await commands.readGames(path, startIndex, stopIndex));
 
+      // Headers only, one game at a time: a game that can't be read gets a placeholder row
+      // instead of failing the whole batch.
       const parsedGames = await Promise.all(
         data.map(async (game, index) => {
-          const { headers } = await parsePGN(game);
-          return [startIndex + index, getGameName(headers)] as const;
+          try {
+            return [startIndex + index, getGameName(await parseHeaders(game))] as const;
+          } catch {
+            return [startIndex + index, t("features.files.game.unreadable")] as const;
+          }
         }),
       );
 
@@ -59,7 +64,7 @@ export default function GameSelector({
         return newGames;
       });
     },
-    [path, setGames],
+    [path, setGames, t],
   );
 
   const fontSize = useAtomValue(fontSizeAtom);

@@ -447,7 +447,7 @@ export async function downloadLichess(
 }
 
 export async function getLichessGame(gameId: string): Promise<string> {
-  const response = await window.fetch(`https://lichess.org/game/export/${gameId.slice(0, 8)}`);
+  const response = await fetch(`https://lichess.org/game/export/${gameId.slice(0, 8)}`);
   if (!response.ok) {
     throw new Error(`Failed to load lichess game ${gameId} - ${response.statusText}`);
   }

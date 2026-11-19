@@ -1,55 +1,11 @@
-import { save } from "@tauri-apps/plugin-dialog";
-import { z } from "zod";
-import type { StoreApi } from "zustand";
 import { commands } from "@/bindings";
-import { fileMetadataSchema, invalidateFileIndex } from "@/features/files/utils/file";
-import { serializeStorageValue } from "./tabStateStorage";
-import type { TreeStoreState } from "@/state/store/tree";
-import {
-    createFile,
-    getFileNameWithoutExtension,
-    isTempImportFile,
-    nowEpochSeconds,
-} from "@/utils/files";
+import { dispose, open } from "@/state/tabSession";
 import { unwrap } from "@/utils/unwrap";
-import { getPGN, parsePGN } from "./chess";
-import { formatDateToPGN } from "./format";
+import { parsePGN } from "./chess";
+import { notifyPgnParseError } from "./pgnParseError";
 import { defaultTree, type GameHeaders, type TreeState } from "./treeReducer";
 
-const dbGameMetadataSchema = z.object({
-    type: z.literal("db"),
-    db: z.string(),
-    id: z.number(),
-});
-
-const entitySourceMetadataSchema = z.union([fileMetadataSchema, dbGameMetadataSchema]);
-
-export type EntitySourceMetadata = z.infer<typeof entitySourceMetadataSchema>;
-
-export const tabSchema = z.object({
-    name: z.string(),
-    value: z.string(),
-    type: z.enum(["new", "play", "analysis", "puzzles"]),
-    gameNumber: z.number().nullish(),
-    source: entitySourceMetadataSchema.nullish(),
-    meta: z
-        .object({
-            timeControl: z.object({
-                seconds: z.number(),
-                increment: z.number(),
-            }),
-        })
-        .optional(),
-});
-
-export type Tab = z.infer<typeof tabSchema>;
-
-export function genID() {
-    function S4() {
-        return (((1 + Math.random()) * 0x10000) | 0).toString(16).substring(1);
-    }
-    return S4() + S4();
-}
+import { genID, type Tab, type EntitySourceMetadata } from "./tabSchema";
 
 export async function createTab({
     tab,
@@ -61,6 +17,7 @@ export async function createTab({
     gameNumber,
     position,
     fen,
+    tree: openedTree,
 }: {
     tab: Omit<Tab, "value">;
     setTabs: React.Dispatch<React.SetStateAction<Tab[]>>;
@@ -72,13 +29,25 @@ export async function createTab({
     position?: number[];
     /** Start the new tab from this position, with no move history. */
     fen?: string;
-}) {
+    /** Start the new tab from this parsed tree. */
+    tree?: TreeState;
+}): Promise<string | null> {
     const id = genID();
 
-    if (pgn !== undefined) {
+    if (openedTree) {
+        // The quota is full: a tab without its tree would open empty over its source
+        if (!open(id, openedTree)) return null;
+    } else if (pgn !== undefined) {
         // For variants files, parse as normal PGN (with variations) but display in variants view
         // Don't use isVariantsMode for parsing - that's only for special PGNs where all sequences are variations
-        const tree = await parsePGN(pgn, headers?.fen, false);
+        let tree: TreeState;
+        try {
+            tree = await parsePGN(pgn, headers?.fen, false);
+        } catch (e) {
+            // The game is refused, not opened cut short; the user was told why.
+            if (notifyPgnParseError(e)) return null;
+            throw e;
+        }
         // If headers are provided, only merge them if the parsed PGN headers are incomplete
         // This preserves complete headers from saved PGNs (like game.pgn) while allowing
         // updates for PGNs that were reconstructed from moves
@@ -119,10 +88,9 @@ export async function createTab({
                 tree.position = position;
             }
         }
-        sessionStorage.setItem(id, serializeStorageValue({ version: 0, state: tree }));
+        if (!open(id, tree)) return null;
     } else if (fen) {
-        const tree = defaultTree(fen);
-        sessionStorage.setItem(id, serializeStorageValue({ version: 0, state: tree }));
+        if (!open(id, defaultTree(fen))) return null;
     }
 
     setTabs((prev) => {
@@ -130,6 +98,8 @@ export async function createTab({
             prev.length === 0 ||
             (prev.length === 1 && prev[0].type === "new" && tab.type !== "new")
         ) {
+            // Disposing twice (a re-run updater) is harmless
+            if (prev.length === 1) void dispose(prev[0].value);
             return [
                 {
                     ...tab,
@@ -153,107 +123,10 @@ export async function createTab({
     return id;
 }
 
-export async function saveToFile({
-    dir,
-    tab,
-    setCurrentTab,
-    store,
-}: {
-    dir: string;
-    tab: Tab | undefined;
-    setCurrentTab: React.Dispatch<React.SetStateAction<Tab>>;
-    store: StoreApi<TreeStoreState>;
-}) {
-    let filePath: string;
-    if (tab?.source?.type === "file" && !isTempImportFile(tab?.source?.path)) {
-        filePath = tab.source.path;
-    } else {
-        const userChoice = await save({
-            defaultPath: `${dir}/analyze-game-${formatDateToPGN(new Date())}.pgn`,
-            filters: [
-                {
-                    name: "PGN",
-                    extensions: ["pgn"],
-                },
-            ],
-        });
-        if (userChoice === null) return;
-        // On Linux the dialog filter doesn't append the extension.
-        filePath = /\.pgn$/i.test(userChoice) ? userChoice : `${userChoice}.pgn`;
-        const fileName = await getFileNameWithoutExtension(filePath);
-        if (tab?.source?.type === "file" && isTempImportFile(tab?.source?.path)) {
-            const count = unwrap(await commands.countPgnGames(tab?.source?.path ?? ""));
-            const games = unwrap(await commands.readGames(tab?.source?.path ?? "", 0, count - 1));
-            const pgn = games.join("");
-            await createFile({
-                filename: fileName,
-                filetype: "game",
-                pgn,
-                dir: dir,
-            });
-        }
-        setCurrentTab((prev) => {
-            return {
-                ...prev,
-                source: {
-                    ...(prev.source ?? {
-                        type: "file",
-                        numGames: 1,
-                        metadata: { type: "game", tags: [] },
-                    }),
-                    name: fileName,
-                    path: filePath,
-                    lastModified: nowEpochSeconds(),
-                },
-            };
-        });
-    }
-    unwrap(
-        await commands.writeGame(
-            filePath,
-            tab?.gameNumber || 0,
-            `${getPGN(store.getState().root, {
-                headers: store.getState().headers,
-                comments: true,
-                extraMarkups: true,
-                glyphs: true,
-                variations: true,
-            })}\n\n`,
-        ),
-    );
-    invalidateFileIndex();
-    store.getState().save();
-}
-
-export async function saveTab(tab: Tab, store: StoreApi<TreeStoreState>) {
-    if (tab.source?.type === "file") {
-        // Generate PGN from the tree state
-        // This should correctly handle variations for both regular and variants files
-        const pgn = `${getPGN(store.getState().root, {
-            headers: store.getState().headers,
-            comments: true,
-            extraMarkups: true,
-            glyphs: true,
-            variations: true,
-        })}\n\n`;
-
-        unwrap(await commands.writeGame(tab.source.path, tab?.gameNumber || 0, pgn));
-        invalidateFileIndex();
-    } else if (tab.source?.type === "db") {
-        const headers = store.getState().headers;
-        const moves = `${getPGN(store.getState().root, {
-            headers: headers,
-            comments: true,
-            extraMarkups: true,
-            glyphs: true,
-            variations: true,
-        })}\n\n`;
-
-        await commands.updateGame(tab.source.db, tab.source.id, {
-            ...headers,
-            moves,
-        });
-    }
+// A tab is created or reloaded only after its PGN parsed, so the error leaves nothing half-open
+function rethrowNotified(e: unknown): never {
+    notifyPgnParseError(e);
+    throw e;
 }
 
 export async function reloadTab(tab: Tab): Promise<TreeState | undefined> {
@@ -264,16 +137,16 @@ export async function reloadTab(tab: Tab): Promise<TreeState | undefined> {
 
         // For variants files, parse as normal PGN (with variations) but display in variants view
         // Don't use isVariantsMode for parsing - that's only for special PGNs where all sequences are variations
-        tree = await parsePGN(game, undefined, false);
+        tree = await parsePGN(game, undefined, false).catch(rethrowNotified);
     } else if (tab.source?.type === "db") {
         const game = unwrap(await commands.getGame(tab.source.db, tab.source.id));
 
-        tree = await parsePGN(game.moves);
+        tree = await parsePGN(game.moves).catch(rethrowNotified);
         tree.headers = game;
     }
 
     if (tree != null) {
-        sessionStorage.setItem(tab.value, serializeStorageValue({ version: 0, state: tree }));
+        open(tab.value, tree);
         return tree;
     }
 }

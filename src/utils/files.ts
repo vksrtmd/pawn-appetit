@@ -5,12 +5,13 @@ import { exists, mkdir, readTextFile, writeTextFile } from "@tauri-apps/plugin-f
 import { platform } from "@tauri-apps/plugin-os";
 import { defaultGame, makePgn } from "chessops/pgn";
 import { commands } from "@/bindings";
-import { invalidateFileIndex, type FileMetadata } from "@/features/files/utils/file";
+import { infoPathFor, invalidateFileIndex, type FileMetadata } from "@/features/files/utils/file";
 import { unwrap } from "@/utils/unwrap";
 import { parsePGN } from "./chess";
+import { notifyPgnParseError } from "./pgnParseError";
 import { recordRecentFile } from "./recentFiles";
-import { serializeStorageValue } from "./tabStateStorage";
-import { createTab, type Tab } from "./tabs";
+import type { Tab } from "./tabSchema";
+import { createTab } from "./tabs";
 import { getGameName } from "./treeReducer";
 
 export function usePlatform() {
@@ -39,7 +40,7 @@ export async function openFile(
     file: string,
     setTabs: React.Dispatch<React.SetStateAction<Tab[]>>,
     setActiveTab: React.Dispatch<React.SetStateAction<string | null>>,
-) {
+): Promise<boolean> {
     const count = unwrap(await commands.countPgnGames(file));
     const firstGame = unwrap(await commands.readGames(file, 0, 0))[0];
     if (!firstGame) {
@@ -74,9 +75,16 @@ export async function openFile(
     // Parse only the first game for session storage
     // For variants files, parse as normal PGN (with variations) but display in variants view
     // Don't use isVariantsMode for parsing - that's only for special PGNs where all sequences are variations
-    const firstGameTree = await parsePGN(firstGame);
+    let firstGameTree: Awaited<ReturnType<typeof parsePGN>>;
+    try {
+        firstGameTree = await parsePGN(firstGame);
+    } catch (e) {
+        // Nothing is opened: no tab, no truncated tree
+        if (notifyPgnParseError(e)) return false;
+        throw e;
+    }
 
-    const tabId = await createTab({
+    const id = await createTab({
         tab: {
             name: getGameName(firstGameTree?.headers) || "Multiple Games",
             type: "analysis",
@@ -85,11 +93,9 @@ export async function openFile(
         setActiveTab,
         srcInfo: fileInfo,
         gameNumber: 0,
+        tree: firstGameTree,
     });
-
-    // Store the first game's state in session storage (for backward compatibility)
-    // The analysis board will handle multiple games through the pgn content
-    sessionStorage.setItem(tabId, serializeStorageValue({ version: 0, state: firstGameTree }));
+    return id !== null;
 }
 
 export async function openFileAndRemember(
@@ -97,8 +103,7 @@ export async function openFileAndRemember(
     setTabs: React.Dispatch<React.SetStateAction<Tab[]>>,
     setActiveTab: React.Dispatch<React.SetStateAction<string | null>>,
 ) {
-    await openFile(file, setTabs, setActiveTab);
-    recordRecentFile(file);
+    if (await openFile(file, setTabs, setActiveTab)) recordRecentFile(file);
 }
 
 export async function createFile({
@@ -122,7 +127,7 @@ export async function createFile({
     };
     await mkdir(dir, { recursive: true });
     await writeTextFile(file, pgn || makePgn(defaultGame()));
-    await writeTextFile(file.replace(".pgn", ".info"), JSON.stringify(metadata));
+    await writeTextFile(infoPathFor(file), JSON.stringify(metadata));
 
     const numGames = unwrap(await commands.countPgnGames(file));
     invalidateFileIndex(dir);

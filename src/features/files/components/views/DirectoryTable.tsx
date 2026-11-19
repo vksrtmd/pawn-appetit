@@ -10,7 +10,6 @@ import {
   IconTrash,
 } from "@tabler/icons-react";
 import { useNavigate } from "@tanstack/react-router";
-import { remove } from "@tauri-apps/plugin-fs";
 import clsx from "clsx";
 import Fuse from "fuse.js";
 import { useAtom, useSetAtom } from "jotai";
@@ -20,13 +19,11 @@ import { DataTable, type DataTableSortStatus } from "mantine-datatable";
 import { useCallback, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { commands } from "@/bindings";
-import {
-  FILE_TYPE_LABELS,
-  invalidateFileIndex,
-  type Directory,
-  type FileMetadata,
-} from "@/features/files/utils/file";
+import { FILE_TYPE_LABELS, type Directory, type FileMetadata } from "@/features/files/utils/file";
+import { confirmDelete } from "@/features/files/components/confirmDelete";
+import { deleteFile, removeEntry } from "@/features/files/utils/fileOps";
 import { getStats } from "@/features/files/utils/opening";
+import { dropFileLinks } from "@/utils/tabSources";
 import { useLanguageChangeListener } from "@/hooks/useLanguageChangeListener";
 import { activeTabAtom, deckAtomFamily, tabsAtom } from "@/state/atoms";
 import { createTab } from "@/utils/tabs";
@@ -254,7 +251,8 @@ function Table({
   const openFile = useCallback(
     async (record: FileMetadata) => {
       const pgn = unwrap(await commands.readGames(record.path, 0, 0));
-      createTab({
+      // createTab resolves null when the game did not parse (the user was told): open nothing
+      const id = await createTab({
         tab: {
           name: record?.name || "Untitled",
           type: "analysis",
@@ -265,6 +263,7 @@ function Table({
         srcInfo: record,
         gameNumber: 0,
       });
+      if (id === null) return;
       navigate({ to: "/boards" });
     },
     [setActiveTab, setTabs, navigate],
@@ -388,15 +387,12 @@ function Table({
             icon: <IconTrash size={16} />,
             title: t("features.files.delete.delete"),
             color: "red",
-            onClick: async () => {
-              if (record.type === "directory") {
-                await remove(record.path, { recursive: true });
-              } else {
-                await remove(record.path);
-              }
-              invalidateFileIndex();
-              setFiles(files?.filter((f) => record.path.includes(f.path)));
-            },
+            onClick: () =>
+              confirmDelete(t, record.name, async () => {
+                await deleteFile(record.path, record.type === "directory");
+                setTabs((tabs) => dropFileLinks(tabs, record.path));
+                setFiles(removeEntry(files ?? [], record.path));
+              }),
           },
         ])(event);
       }}

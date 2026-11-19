@@ -18,11 +18,11 @@ mod puzzle;
 mod sound;
 mod telemetry;
 
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
-use chess::{AnalysisCancelRegistry, BestMovesPayload, EngineProcess, ReportProgress};
+use chess::{BestMovesPayload, EngineRegistry, ReportProgress};
 use dashmap::DashMap;
-use db::{DatabaseProgress, GameQueryJs, NormalizedGame, PositionStats};
+use db::DatabaseProgress;
 use derivative::Derivative;
 use fide::FidePlayer;
 use oauth::AuthState;
@@ -76,9 +76,6 @@ pub type GameData = (
     Option<i32>,
 );
 
-type LineCacheKey = (GameQueryJs, std::path::PathBuf);
-type LineCacheValue = (Vec<PositionStats>, Vec<NormalizedGame>);
-
 #[derive(Derivative)]
 #[derivative(Default)]
 pub struct AppState {
@@ -86,31 +83,12 @@ pub struct AppState {
         String,
         diesel::r2d2::Pool<diesel::r2d2::ConnectionManager<diesel::SqliteConnection>>,
     >,
-    #[derivative(Default(
-        value = "Mutex::new(lru::LruCache::new(std::num::NonZeroUsize::new(100).unwrap()))"
-    ))]
-    line_cache: Mutex<lru::LruCache<LineCacheKey, LineCacheValue>>,
-    db_cache: Mutex<Arc<Vec<GameData>>>,
     #[derivative(Default(value = "Arc::new(Semaphore::new(2))"))]
     new_request: Arc<Semaphore>,
     pgn_offsets: DashMap<String, Vec<u64>>,
     fide_players: RwLock<Vec<FidePlayer>>,
-    engine_processes: DashMap<(String, String), Arc<tokio::sync::Mutex<EngineProcess>>>,
-    analysis_cancel: AnalysisCancelRegistry,
+    engines: EngineRegistry,
     auth: AuthState,
-}
-
-impl AppState {
-    /// Kill every registered engine child process without awaiting, so it is usable from
-    /// the synchronous app-exit hook. Engines whose lock is held are still killed on drop
-    /// (`kill_on_drop`).
-    fn kill_all_engines(&self) {
-        for entry in self.engine_processes.iter() {
-            if let Ok(mut process) = entry.value().try_lock() {
-                let _ = process.child.start_kill();
-            }
-        }
-    }
 }
 
 // ============================================================================
@@ -208,7 +186,7 @@ pub async fn run() {
         .expect("error while building tauri application")
         .run(|app, event| {
             if let tauri::RunEvent::Exit = event {
-                app.state::<AppState>().kill_all_engines();
+                app.state::<AppState>().engines.kill_all_now();
             }
         });
 }
@@ -292,46 +270,5 @@ mod tests {
         assert!(!is_supported_external_url("https://example.com"));
         assert!(!is_supported_external_url("file:///tmp/game.pgn"));
         assert!(!is_supported_external_url("not-a-url"));
-    }
-}
-
-#[cfg(all(test, unix))]
-mod engine_exit_tests {
-    use super::*;
-    use std::os::unix::fs::PermissionsExt;
-
-    /// A stand-in engine that answers the handshake and then ignores stdin EOF, like an
-    /// engine that would outlive the app.
-    async fn spawn_stubborn_engine(dir: &std::path::Path) -> EngineProcess {
-        let path = dir.join("engine.sh");
-        std::fs::write(
-            &path,
-            "#!/bin/sh\nwhile read l; do\n case \"$l\" in uci) echo uciok;; isready) echo readyok;; esac\ndone\nexec sleep 60\n",
-        )
-        .unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-        EngineProcess::new(path).await.unwrap().0
-    }
-
-    #[tokio::test]
-    async fn kill_all_engines_terminates_every_registered_engine_process() {
-        let dir = tempfile::tempdir().unwrap();
-        let state = AppState::default();
-        for tab in ["a", "b"] {
-            let process = spawn_stubborn_engine(dir.path()).await;
-            state.engine_processes.insert(
-                (tab.to_string(), "engine".to_string()),
-                Arc::new(tokio::sync::Mutex::new(process)),
-            );
-        }
-
-        state.kill_all_engines();
-
-        for entry in state.engine_processes.iter() {
-            let mut process = entry.value().try_lock().unwrap();
-            let status =
-                tokio::time::timeout(std::time::Duration::from_secs(5), process.child.wait()).await;
-            assert!(status.is_ok(), "engine process still running");
-        }
     }
 }

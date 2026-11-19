@@ -11,7 +11,7 @@ import {
 import cx from "clsx";
 import { useEffect } from "react";
 import { ContentEditable } from "@/components/ContentEditable";
-import type { Tab } from "@/utils/tabs";
+import type { Tab } from "@/utils/tabSchema";
 import * as classes from "./styles.css";
 
 export function BoardTab({

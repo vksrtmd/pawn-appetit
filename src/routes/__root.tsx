@@ -40,6 +40,8 @@ import { CUSTOM_EVENTS } from "@/features/boards/constants";
 import { useResponsiveLayout } from "@/hooks/useResponsiveLayout";
 import { checkForUpdates as checkLatestRelease } from "@/services/version-checker";
 import { activeTabAtom, densityAtom, tabsAtom } from "@/state/atoms";
+import { useCloseActiveTab } from "@/state/tabClose";
+import { closeAllTabs, closeOtherTabs } from "@/state/tabSession";
 import { keyMapAtom } from "@/state/keybindings";
 import { openFileAndRemember } from "@/utils/files";
 import { formatHotkeyDisplay } from "@/utils/formatHotkey";
@@ -481,29 +483,11 @@ function RootLayout() {
     }
   }, []);
 
-  const handleCloseTab = useCallback(() => {
-    setTabs((prevTabs) => {
-      const activeIndex = prevTabs.findIndex((tab) => tab.value === activeTab);
-      if (activeIndex !== -1) {
-        const newTabs = prevTabs.filter((_, i) => i !== activeIndex);
-        if (newTabs.length > 0) {
-          const newActiveIndex = Math.min(activeIndex, newTabs.length - 1);
-          setActiveTab(newTabs[newActiveIndex].value);
-        } else {
-          setActiveTab(null);
-        }
-        return newTabs;
-      }
-      return prevTabs;
-    });
-  }, [activeTab, setTabs, setActiveTab]);
+  const handleCloseTab = useCloseActiveTab();
 
   const handleCloseOtherTabs = useCallback(() => {
-    setTabs((prevTabs) => {
-      if (!activeTab) return prevTabs;
-      return prevTabs.filter((tab) => tab.value === activeTab);
-    });
-  }, [activeTab, setTabs]);
+    if (activeTab) closeOtherTabs(activeTab);
+  }, [activeTab]);
 
   const handleGlobalKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -603,14 +587,13 @@ function RootLayout() {
           },
         ],
         [keyMap.OPEN_FILE.keys, openNewFile],
-        [keyMap.CLOSE_BOARD_TAB.keys, handleCloseTab],
         [keyMap.APP_RELOAD.keys, () => location.reload()],
         [keyMap.EXIT_APP.keys, () => exit(0)],
         [keyMap.OPEN_SETTINGS.keys, () => navigate({ to: "/settings" })],
         [keyMap.SHOW_KEYBINDINGS.keys, () => navigate({ to: "/settings/keyboard-shortcuts" })],
         [keyMap.TOGGLE_HELP.keys, () => navigate({ to: "/settings/keyboard-shortcuts" })],
       ] as HotkeyItem[],
-    [keyMap, createNewTab, navigate, t, setTabs, setActiveTab, openNewFile, handleCloseTab],
+    [keyMap, createNewTab, navigate, t, setTabs, setActiveTab, openNewFile],
   );
 
   useHotkeys(hotkeyBindings);
@@ -670,10 +653,7 @@ function RootLayout() {
     });
   }, [t]);
 
-  const handleCloseAllTabs = useCallback(() => {
-    setTabs([]);
-    setActiveTab(null);
-  }, [setTabs, setActiveTab]);
+  const handleCloseAllTabs = closeAllTabs;
 
   const handleMinimizeWindow = useCallback(async () => {
     try {

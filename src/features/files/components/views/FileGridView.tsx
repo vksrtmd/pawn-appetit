@@ -182,7 +182,8 @@ function FileCard({
 
   const openFile = async () => {
     const pgn = unwrap(await commands.readGames(file.path, 0, 0));
-    createTab({
+    // createTab resolves null when the game did not parse (the user was told): open nothing
+    const id = await createTab({
       tab: {
         name: file.name || "Untitled",
         type: "analysis",
@@ -193,6 +194,7 @@ function FileCard({
       srcInfo: file,
       gameNumber: 0,
     });
+    if (id === null) return;
     navigate({ to: "/boards" });
   };
 
