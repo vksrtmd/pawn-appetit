@@ -62,6 +62,7 @@ pub async fn get_engine_logs(
 /// Get best moves from the engine for a given position and options.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn get_best_moves(
     id: String,
     engine: String,
@@ -80,6 +81,7 @@ pub async fn get_best_moves(
 /// Analyze a game using the engine, returning move-by-move analysis.
 #[tauri::command]
 #[specta::specta]
+#[allow(clippy::too_many_arguments)]
 pub async fn analyze_game(
     id: String,
     engine: String,
