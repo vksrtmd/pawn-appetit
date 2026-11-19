@@ -5,7 +5,6 @@ import { parsePGN } from "./chess";
 import { notifyPgnParseError } from "./pgnParseError";
 import { defaultTree, type GameHeaders, type TreeState } from "./treeReducer";
 
-export * from "./tabSchema";
 import { genID, type Tab, type EntitySourceMetadata } from "./tabSchema";
 
 export async function createTab({
@@ -32,15 +31,23 @@ export async function createTab({
     fen?: string;
     /** Start the new tab from this parsed tree. */
     tree?: TreeState;
-}) {
+}): Promise<string | null> {
     const id = genID();
 
     if (openedTree) {
-        open(id, openedTree);
+        // The quota is full: a tab without its tree would open empty over its source
+        if (!open(id, openedTree)) return null;
     } else if (pgn !== undefined) {
         // For variants files, parse as normal PGN (with variations) but display in variants view
         // Don't use isVariantsMode for parsing - that's only for special PGNs where all sequences are variations
-        const tree = await parsePGN(pgn, headers?.fen, false).catch(rethrowNotified);
+        let tree: TreeState;
+        try {
+            tree = await parsePGN(pgn, headers?.fen, false);
+        } catch (e) {
+            // The game is refused, not opened cut short; the user was told why.
+            if (notifyPgnParseError(e)) return null;
+            throw e;
+        }
         // If headers are provided, only merge them if the parsed PGN headers are incomplete
         // This preserves complete headers from saved PGNs (like game.pgn) while allowing
         // updates for PGNs that were reconstructed from moves
@@ -81,9 +88,9 @@ export async function createTab({
                 tree.position = position;
             }
         }
-        open(id, tree);
+        if (!open(id, tree)) return null;
     } else if (fen) {
-        open(id, defaultTree(fen));
+        if (!open(id, defaultTree(fen))) return null;
     }
 
     setTabs((prev) => {

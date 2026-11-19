@@ -30,6 +30,28 @@ export function deserializeStorageValue<T>(raw: string): T | null {
 
 let storageFullShown = false;
 
+/**
+ * Writes `value` compressed under `name`. Returns false when the quota is full: the write is
+ * lost, and the user is told once.
+ */
+export function storeCompressed(name: string, value: string): boolean {
+    try {
+        sessionStorage.setItem(name, compressToUTF16(value));
+        storageFullShown = false;
+        return true;
+    } catch {
+        if (!storageFullShown) {
+            storageFullShown = true;
+            notifications.show({
+                color: "red",
+                title: i18n.t("storageFull.title"),
+                message: i18n.t("storageFull.message"),
+            });
+        }
+        return false;
+    }
+}
+
 // Drop-in StateStorage for zustand `persist`: compresses the JSON string into sessionStorage and
 // decompresses on the way out, tolerating any legacy uncompressed value already stored.
 export const compressedSessionStorage: StateStorage = {
@@ -49,20 +71,7 @@ export const compressedSessionStorage: StateStorage = {
         return raw;
     },
     setItem: (name, value) => {
-        try {
-            sessionStorage.setItem(name, compressToUTF16(value));
-            storageFullShown = false;
-        } catch {
-            // The quota is full: the tab stays usable but this write is lost. Say so once.
-            if (!storageFullShown) {
-                storageFullShown = true;
-                notifications.show({
-                    color: "red",
-                    title: i18n.t("storageFull.title"),
-                    message: i18n.t("storageFull.message"),
-                });
-            }
-        }
+        storeCompressed(name, value);
     },
     removeItem: (name) => {
         sessionStorage.removeItem(name);

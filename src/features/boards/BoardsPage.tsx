@@ -9,7 +9,8 @@ import { Mosaic, type MosaicNode } from "react-mosaic-component";
 import { match } from "ts-pattern";
 
 import { closeOtherTabs, closeTabsToRight } from "@/state/tabSession";
-import { createTab, type Tab } from "@/utils/tabs";
+import type { Tab } from "@/utils/tabSchema";
+import { createTab } from "@/utils/tabs";
 import * as classes from "./BoardsPage.css";
 import { BoardTab } from "./components/BoardTab";
 

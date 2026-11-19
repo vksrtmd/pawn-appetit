@@ -12,6 +12,7 @@ import { TreeStateContext } from "@/components/TreeStateContext";
 import { currentTabAtom, missingMovesAtom } from "@/state/atoms";
 import { keyMapAtom } from "@/state/keybindings";
 import { parsePGN } from "@/utils/chess";
+import { notifyPgnParseError } from "@/utils/pgnParseError";
 import { getTreeStats } from "@/utils/repertoire";
 import { save } from "@/state/tabSession";
 import { getGameName, getNodeAtPath } from "@/utils/treeReducer";
@@ -123,7 +124,14 @@ function GameSelectorAccordion({
 
     if (currentTab?.source?.type === "file") {
       const data = unwrap(await commands.readGames(currentTab.source.path, page, page));
-      const tree = await parsePGN(data[0]);
+      let tree: Awaited<ReturnType<typeof parsePGN>>;
+      try {
+        tree = await parsePGN(data[0]);
+      } catch (e) {
+        // The game stays unopened and the user stays on the current one
+        if (notifyPgnParseError(e)) return;
+        throw e;
+      }
       setState(tree);
 
       const gameName = getGameName(tree.headers);

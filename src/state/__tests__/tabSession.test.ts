@@ -1,5 +1,5 @@
 import { getDefaultStore } from "jotai";
-import { beforeEach, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 
 const {
     killEngines,
@@ -42,18 +42,20 @@ vi.mock("@/utils/files", () => ({
 import { tabsAtom } from "@/state/uiAtoms";
 import { createTreeStore } from "@/state/store/tree";
 import { defaultTree } from "@/utils/treeReducer";
-import type { Tab } from "@/utils/tabs";
+import type { Tab } from "@/utils/tabSchema";
 import { missingMovesAtom } from "../gameAtoms";
 import { engineMovesFamily } from "../engineAtoms";
 import { activeTabAtom } from "../uiAtoms";
 import {
     closeActiveTab,
     closeAllTabs,
+    closeTab,
     closeOtherTabs,
     closeTabsToRight,
     dispose,
     duplicate,
     getSideKey,
+    isDirty,
     open,
     readTree,
     registerTabStore,
@@ -301,4 +303,82 @@ test("a stored tree reads back as the opened tree", () => {
     tree.headers.event = "Opened";
     open("t", tree);
     expect(readTree("t")?.headers.event).toBe("Opened");
+});
+
+test("a tab is dirty from its live store, even when nothing is stored for it", () => {
+    addTab(mkTab("live"));
+    expect(readTree("live")).toBeNull();
+    expect(isDirty("live")).toBe(true);
+});
+
+test("a tab with no live store is dirty from its stored tree", () => {
+    open("cold", { ...defaultTree(), dirty: true });
+    expect(isDirty("cold")).toBe(true);
+    open("clean", defaultTree());
+    expect(isDirty("clean")).toBe(false);
+});
+
+test("open reports false when the quota is full and the tree was not stored", () => {
+    const spy = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+        throw new DOMException("full", "QuotaExceededError");
+    });
+    try {
+        expect(open("t", defaultTree())).toBe(false);
+    } finally {
+        spy.mockRestore();
+    }
+    expect(open("t", defaultTree())).toBe(true);
+});
+
+test("a temp import file's save-as leaves the tab on the new file when the write fails", async () => {
+    addTab(mkTab("t", fileSource("/tmp/import-1.pgn")));
+    saveDialog.mockResolvedValue("/d/kept.pgn");
+    countPgnGames.mockResolvedValue({ status: "ok", data: 1 });
+    readGames.mockResolvedValue({ status: "ok", data: ["1. e4 *"] });
+    writeGame.mockResolvedValue({ status: "error", error: "disk full" });
+
+    await expect(save("t", { dir: "/d" })).rejects.toThrow("disk full");
+
+    expect(tabOf("t").source).toMatchObject({ path: "/d/kept.pgn" });
+});
+
+describe("closeTab", () => {
+    beforeEach(() => {
+        for (const id of ["a", "b", "c"]) fillTab(id);
+        jotai.set(tabsAtom, [mkTab("a"), mkTab("b"), mkTab("c")]);
+    });
+
+    test("closing the active middle tab activates the tab that takes its place, and disposes it", async () => {
+        jotai.set(activeTabAtom, "b");
+        closeTab("b");
+        await settle();
+        expect(jotai.get(tabsAtom).map((t) => t.value)).toEqual(["a", "c"]);
+        expect(jotai.get(activeTabAtom)).toBe("c");
+        expectDisposed("b");
+    });
+
+    test("closing the active last tab activates the previous one", () => {
+        jotai.set(activeTabAtom, "c");
+        closeTab("c");
+        expect(jotai.get(activeTabAtom)).toBe("b");
+    });
+
+    test("closing another tab keeps the active tab", () => {
+        jotai.set(activeTabAtom, "a");
+        closeTab("c");
+        expect(jotai.get(activeTabAtom)).toBe("a");
+    });
+
+    test("closing the only tab leaves no active tab", () => {
+        jotai.set(tabsAtom, [mkTab("a")]);
+        jotai.set(activeTabAtom, "a");
+        closeTab("a");
+        expect(jotai.get(activeTabAtom)).toBeNull();
+    });
+
+    test("an unknown id changes nothing", () => {
+        jotai.set(activeTabAtom, "a");
+        closeTab("zzz");
+        expect(jotai.get(tabsAtom)).toHaveLength(3);
+    });
 });

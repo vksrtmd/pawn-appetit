@@ -17,7 +17,9 @@ export function followRename(tabs: Tab[], from: string, to: FileMetadata): Tab[]
 export function dropFileLinks(tabs: Tab[], path: string): Tab[] {
     return tabs.map((tab) =>
         tab.source?.type === "file" &&
-        (tab.source.path === path || tab.source.path.startsWith(`${path}/`))
+        (tab.source.path === path ||
+            tab.source.path.startsWith(`${path}/`) ||
+            tab.source.path.startsWith(`${path}\\`))
             ? { ...tab, source: null }
             : tab,
     );

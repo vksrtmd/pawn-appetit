@@ -28,9 +28,13 @@ import {
     nowEpochSeconds,
 } from "@/utils/files";
 import { formatDateToPGN } from "@/utils/format";
-import type { Tab } from "@/utils/tabs";
+import type { Tab } from "@/utils/tabSchema";
 import { unwrap } from "@/utils/unwrap";
-import { deserializeStorageValue, compressedSessionStorage } from "@/utils/tabStateStorage";
+import {
+    compressedSessionStorage,
+    deserializeStorageValue,
+    storeCompressed,
+} from "@/utils/tabStateStorage";
 import { genID } from "@/utils/tabSchema";
 import type { TreeState } from "@/utils/treeReducer";
 import { missingMovesAtom } from "./gameAtoms";
@@ -74,6 +78,11 @@ export async function save(tabId: string, { dir }: { dir: string }): Promise<Sav
         return "saved";
     }
 
+    const setSource = (next: Tab["source"]) =>
+        jotai.set(tabsAtom, (prev) =>
+            prev.map((t) => (t.value === tabId ? { ...t, source: next } : t)),
+        );
+
     let filePath: string;
     let newSource: Tab["source"];
     if (source?.type === "file" && !isTempImportFile(source.path)) {
@@ -87,11 +96,6 @@ export async function save(tabId: string, { dir }: { dir: string }): Promise<Sav
         // On Linux the dialog filter doesn't append the extension.
         filePath = /\.pgn$/i.test(userChoice) ? userChoice : `${userChoice}.pgn`;
         const fileName = await getFileNameWithoutExtension(filePath);
-        if (source?.type === "file") {
-            const count = unwrap(await commands.countPgnGames(source.path));
-            const games = unwrap(await commands.readGames(source.path, 0, count - 1));
-            await createFile({ filename: fileName, filetype: "game", pgn: games.join(""), dir });
-        }
         newSource = {
             ...(source ?? {
                 type: "file",
@@ -102,15 +106,18 @@ export async function save(tabId: string, { dir }: { dir: string }): Promise<Sav
             path: filePath,
             lastModified: nowEpochSeconds(),
         } as Tab["source"];
+        if (source?.type === "file") {
+            const count = unwrap(await commands.countPgnGames(source.path));
+            const games = unwrap(await commands.readGames(source.path, 0, count - 1));
+            await createFile({ filename: fileName, filetype: "game", pgn: games.join(""), dir });
+            // The copy exists now: the tab leaves the temp file even if the write below fails.
+            setSource(newSource);
+        }
     }
 
     unwrap(await commands.writeGame(filePath, tab?.gameNumber || 0, pgn));
     invalidateFileIndex();
-    if (newSource) {
-        jotai.set(tabsAtom, (prev) =>
-            prev.map((t) => (t.value === tabId ? { ...t, source: newSource } : t)),
-        );
-    }
+    if (newSource) setSource(newSource);
     store.getState().save();
     return "saved";
 }
@@ -143,10 +150,17 @@ export function readTree(tabId: string): TreeState | null {
 
 /**
  * Stores `tree` as tab `tabId`'s tree, so the board's first mount (or the next one) loads it. Call
- * it before the tab is added to the tab list.
+ * it before the tab is added to the tab list. Returns false when the tree could not be stored
+ * (storage full): the caller must not open a tab for it.
  */
-export function open(tabId: string, tree: TreeState): void {
-    compressedSessionStorage.setItem(tabId, JSON.stringify({ version: TREE_VERSION, state: tree }));
+export function open(tabId: string, tree: TreeState): boolean {
+    return storeCompressed(tabId, JSON.stringify({ version: TREE_VERSION, state: tree }));
+}
+
+/** Whether tab `tabId` has unsaved changes: its live store when mounted, else its stored tree. */
+export function isDirty(tabId: string): boolean {
+    const store = stores.get(tabId);
+    return store ? store.getState().dirty : (readTree(tabId)?.dirty ?? false);
 }
 
 /** Adds a copy of tab `tabId` with its tree, source and side keys, and makes it the active tab. */
@@ -209,14 +223,27 @@ function removeTabs(keep: (tab: Tab, index: number) => boolean, active?: string 
     for (const tab of tabs) if (!kept.includes(tab)) void dispose(tab.value);
 }
 
-/** Closes the active tab (Ctrl/Cmd+W) and activates its neighbour. */
-export function closeActiveTab(): void {
+/**
+ * Closes tab `tabId`. When it is the active tab, its neighbour (the tab that takes its place, or
+ * the previous one at the end) becomes active; otherwise the active tab stays.
+ */
+export function closeTab(tabId: string): void {
     const jotai = getDefaultStore();
     const tabs = jotai.get(tabsAtom);
-    const index = tabs.findIndex((t) => t.value === jotai.get(activeTabAtom));
+    const index = tabs.findIndex((t) => t.value === tabId);
     if (index === -1) return;
     const next = tabs.filter((_, i) => i !== index);
-    removeTabs((_, i) => i !== index, next[Math.min(index, next.length - 1)]?.value ?? null);
+    const active =
+        jotai.get(activeTabAtom) === tabId
+            ? (next[Math.min(index, next.length - 1)]?.value ?? null)
+            : undefined;
+    removeTabs((_, i) => i !== index, active);
+}
+
+/** Closes the active tab (Ctrl/Cmd+W) and activates its neighbour. */
+export function closeActiveTab(): void {
+    const tabId = getDefaultStore().get(activeTabAtom);
+    if (tabId) closeTab(tabId);
 }
 
 export function closeOtherTabs(tabId: string): void {
